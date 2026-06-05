@@ -896,73 +896,82 @@ select option{background:var(--bg2);}
 <body>
 
 <!-- ── AUTH SCREEN ── -->
-<div id="auth-screen" style="display:none">
+<div id="auth-screen">
   <div class="auth-box">
     <div class="auth-logo">KT</div>
     <div class="auth-title">Kiên Thịnh Quote</div>
     <div class="auth-sub">Quản lý báo giá chuyên nghiệp</div>
 
+    <!-- Tabs -->
     <div class="auth-tab" id="auth-tabs">
-      <button class="auth-tab-btn active" id="tab-login">Đăng nhập</button>
-      <button class="auth-tab-btn" id="tab-register">Đăng ký</button>
+      <button class="auth-tab-btn active" id="tab-login" onclick="switchAuthTab('login')">Đăng nhập</button>
+      <button class="auth-tab-btn" id="tab-register" onclick="switchAuthTab('register')">Đăng ký</button>
     </div>
 
     <div class="auth-err" id="auth-err"></div>
     <div class="auth-ok" id="auth-ok"></div>
 
-    <!-- ĐĂNG NHẬP -->
+    <!-- Form đăng nhập -->
     <div id="form-login">
-      <label class="auth-label">Email</label>
-      <input class="auth-inp" id="login-email" type="email" placeholder="example@email.com" autocomplete="email">
-      <label class="auth-label">Mật khẩu</label>
+      <label class="auth-lbl">EMAIL</label>
+      <input class="auth-inp" id="login-email" type="email" placeholder="email@example.com" autocomplete="email">
+      <label class="auth-lbl">MẬT KHẨU</label>
       <input class="auth-inp" id="login-pass" type="password" placeholder="••••••••" autocomplete="current-password">
       <button class="auth-btn" id="btn-login">Đăng nhập</button>
-      <div style="text-align:right;margin-top:10px">
-        <span class="auth-link" id="link-forgot">Quên mật khẩu?</span>
+      <div style="text-align:right;margin-top:6px">
+        <span class="auth-link" id="link-forgot" style="font-size:12px">Quên mật khẩu?</span>
       </div>
     </div>
 
-    <!-- ĐĂNG KÝ -->
+    <!-- Form đăng ký -->
     <div id="form-register" style="display:none">
-      <div style="background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:10px 12px;margin-bottom:14px;font-size:11px;color:var(--text2);line-height:1.8">
-        Vui lòng điền đầy đủ thông tin bên dưới để tạo tài khoản:<br>
-        <span style="color:var(--text3)">① Họ và tên &nbsp;② Email &nbsp;③ Số điện thoại &nbsp;④ Mật khẩu</span>
-      </div>
-      <label class="auth-label">① Họ và tên <span style="color:var(--danger)">*</span></label>
-      <input class="auth-inp" id="reg-name" type="text" placeholder="Nguyễn Văn A" autocomplete="name">
-      <label class="auth-label">② Email <span style="color:var(--danger)">*</span></label>
-      <input class="auth-inp" id="reg-email" type="email" placeholder="example@gmail.com" autocomplete="email">
-      <div class="auth-field-hint">Dùng để đăng nhập. Mỗi email chỉ đăng ký được 1 lần.</div>
-      <label class="auth-label">③ Số điện thoại <span style="color:var(--danger)">*</span></label>
-      <input class="auth-inp" id="reg-phone" type="tel" placeholder="0901 234 567" autocomplete="tel">
-      <label class="auth-label">④ Mật khẩu <span style="color:var(--danger)">*</span></label>
+      <label class="auth-lbl">HỌ VÀ TÊN</label>
+      <input class="auth-inp" id="reg-name" type="text" placeholder="Nguyễn Văn A">
+      <label class="auth-lbl">EMAIL</label>
+      <input class="auth-inp" id="reg-email" type="email" placeholder="email@example.com">
+      <label class="auth-lbl">SỐ ĐIỆN THOẠI</label>
+      <input class="auth-inp" id="reg-phone" type="tel" placeholder="0900000000">
+      <label class="auth-lbl">MẬT KHẨU</label>
       <input class="auth-inp" id="reg-pass" type="password" placeholder="Tối thiểu 6 ký tự">
-      <label class="auth-label">Nhập lại mật khẩu <span style="color:var(--danger)">*</span></label>
-      <input class="auth-inp" id="reg-pass2" type="password" placeholder="••••••••">
+      <input class="auth-inp" id="reg-pass2" type="password" placeholder="Nhập lại mật khẩu">
       <button class="auth-btn" id="btn-register">Tạo tài khoản</button>
     </div>
 
-    <!-- QUÊN MẬT KHẨU -->
-    <div id="form-forgot" style="display:none">
-      <div style="font-size:12px;color:var(--text2);margin-bottom:12px;line-height:1.6">
-        Nhập email đã đăng ký. Mật khẩu sẽ được đặt lại thành <b style="color:var(--accent2)">123456</b>.
+    <!-- Form nhập OTP -->
+    <div id="form-otp" style="display:none">
+      <div style="text-align:center;margin-bottom:16px">
+        <div style="font-size:32px;margin-bottom:8px">📧</div>
+        <div style="font-size:13px;color:var(--text2);line-height:1.7">
+          Mã xác nhận đã gửi đến admin.<br>
+          Vui lòng liên hệ <b style="color:var(--accent2)">tuan.npa2706@gmail.com</b><br>
+          để nhận mã OTP.
+        </div>
       </div>
-      <label class="auth-label">Email đã đăng ký</label>
-      <input class="auth-inp" id="forgot-email" type="email" placeholder="example@email.com">
-      <button class="auth-btn" id="btn-forgot">Đặt lại mật khẩu</button>
-      <div style="text-align:center;margin-top:12px">
-        <span class="auth-link" id="link-back-login">← Quay lại đăng nhập</span>
+      <label class="auth-lbl">NHẬP MÃ OTP (6 SỐ)</label>
+      <input class="auth-inp" id="otp-input" type="text" inputmode="numeric" 
+        maxlength="6" placeholder="_ _ _ _ _ _" 
+        style="text-align:center;font-size:24px;letter-spacing:8px;font-weight:700">
+      <button class="auth-btn" id="btn-otp">Xác nhận</button>
+      <div style="text-align:center;margin-top:10px">
+        <span class="auth-link" id="link-resend-otp" style="font-size:12px">Gửi lại mã</span>
+        &nbsp;·&nbsp;
+        <span class="auth-link" onclick="switchAuthTab('login')" style="font-size:12px">Quay lại</span>
       </div>
     </div>
 
-    <div class="auth-divider" id="auth-divider-guest"><span>hoặc</span></div>
-    <button class="auth-btn auth-btn-ghost" id="auth-guest-btn">Dùng thử không cần tài khoản</button>
-    <div class="auth-note">Dữ liệu lưu trên thiết bị của bạn<br>Mỗi email có dữ liệu riêng biệt</div>
+    <!-- Form quên mật khẩu -->
+    <div id="form-forgot" style="display:none">
+      <label class="auth-lbl">EMAIL ĐÃ ĐĂNG KÝ</label>
+      <input class="auth-inp" id="forgot-email" type="email" placeholder="email@example.com">
+      <button class="auth-btn" id="btn-forgot">Đặt lại mật khẩu</button>
+      <div style="text-align:center;margin-top:10px">
+        <span class="auth-link" onclick="switchAuthTab('login')" style="font-size:12px">← Quay lại đăng nhập</span>
+      </div>
+    </div>
+
     <div style="margin-top:10px;text-align:center">
       <span class="auth-link" id="link-transfer" style="font-size:11px;color:var(--text3)">📲 Chuyển tài khoản từ thiết bị khác</span>
     </div>
-
-    <!-- Transfer modal -->
     <div id="transfer-panel" style="display:none;margin-top:14px;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:10px">
       <div style="font-size:12px;font-weight:700;color:var(--accent2);margin-bottom:8px">📲 Nhập mã chuyển từ thiết bị khác</div>
       <textarea id="transfer-code" class="auth-inp" rows="3" placeholder="Dán mã chuyển vào đây..." style="resize:none;font-size:11px;font-family:monospace"></textarea>
@@ -971,7 +980,7 @@ select option{background:var(--bg2);}
   </div>
 </div>
 
-<nav id="sidebar">
+<nav id="sidebar">>
   <div class="sb-logo-wrap">
     <div style="display:flex;align-items:center;gap:10px;">
       <div class="sb-mark">KT</div>
@@ -1223,9 +1232,12 @@ function getUsers() { return LS.get('bgpro:users') || {}; }
 function saveUsers(u) { LS.set('bgpro:users', u); cloudSaveUsers(u); }
 
 function switchAuthTab(tab){
-  // Show/hide forms
   document.getElementById('form-login').style.display=tab==='login'?'block':'none';
   document.getElementById('form-register').style.display=tab==='register'?'block':'none';
+  document.getElementById('form-otp').style.display=tab==='otp'?'block':'none';
+  document.getElementById('form-forgot').style.display=tab==='forgot'?'block':'none';
+  const tabs=document.getElementById('auth-tabs');
+  if(tabs)tabs.style.display=(tab==='otp'||tab==='forgot')?'none':'flex';
   document.getElementById('form-forgot').style.display=tab==='forgot'?'block':'none';
   // Tab buttons
   document.getElementById('tab-login').classList.toggle('active',tab==='login');
@@ -1461,21 +1473,26 @@ window.addEventListener('DOMContentLoaded',()=>{
     if(p){p.style.display=p.style.display==='none'?'block':'none';}
   });
   $('btn-transfer')?.addEventListener('click',doTransfer);
+  $('btn-otp')?.addEventListener('click',verifyOTP);
+  $('otp-input')?.addEventListener('keydown',e=>{if(e.key==='Enter')verifyOTP();});
+  $('link-resend-otp')?.addEventListener('click',resendOTP);
+  $('link-forgot')?.addEventListener('click',()=>switchAuthTab('forgot'));
 
-  // Check Supabase Google session trước
-  sb.auth.getSession().then(({ data: { session } }) => {
-    if(session?.user){
-      // Đã đăng nhập bằng Google
-      loginUser('__default__', session.user.user_metadata?.name || session.user.email);
-      // Sync data từ Supabase
+  // Check session - nếu đã đăng nhập thì vào thẳng app
+  const lastUser = LS.get('bgpro:lastUser');
+  if(lastUser){
+    const localUsers = LS.get('bgpro:users')||{};
+    if(localUsers[lastUser] && localUsers[lastUser].status==='approved'){
+      loginUser(lastUser, localUsers[lastUser].name||lastUser);
       setTimeout(()=>sbInit(), 800);
     } else {
-      // Chưa đăng nhập - vào thẳng app (dùng local data)
-      loginUser('__default__', LS.get('bgpro:displayName')||'Người dùng');
+      // Show auth screen
+      document.getElementById('auth-screen').style.display='flex';
     }
-  }).catch(()=>{
-    loginUser('__default__', LS.get('bgpro:displayName')||'Người dùng');
-  });
+  } else {
+    // Show auth screen
+    document.getElementById('auth-screen').style.display='flex';
+  }
   
   // Lắng nghe auth state changes
   sb.auth.onAuthStateChange((event, session) => {
@@ -2206,6 +2223,142 @@ function sbAutoSync(){
   }, 3000);
 }
 
+
+// ── OTP SYSTEM ───────────────────────────────────────────────
+// OTP lưu trong Supabase table 'otp_requests'
+// Khi đăng ký: tạo OTP 6 số → lưu Supabase → gửi email admin qua mailto
+
+let _pendingOtpEmail = '';
+let _pendingOtpName  = '';
+let _pendingOtpPass  = '';
+
+function generateOTP(){
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+async function sendOTPToAdmin(name, email, phone, otp){
+  // Lưu OTP vào Supabase (bảng otp_requests)
+  const expiry = new Date(Date.now() + 30*60*1000).toISOString(); // 30 phút
+  await sb.from('otp_requests').upsert({
+    email, otp_code: otp, name, phone,
+    expires_at: expiry, used: false
+  }, {onConflict:'email'});
+
+  // Gửi email về admin qua mailto
+  const subject = encodeURIComponent('[KT Quote] Đăng ký mới - OTP: ' + otp);
+  const body = encodeURIComponent(
+    'Có người dùng mới đăng ký Kiên Thịnh Quote:\n\n' +
+    'Họ tên: ' + name + '\n' +
+    'Email: ' + email + '\n' +
+    'SĐT: ' + phone + '\n\n' +
+    '🔑 MÃ OTP: ' + otp + '\n\n' +
+    'Mã có hiệu lực 30 phút.\n' +
+    'Gửi mã này cho người dùng nếu bạn đồng ý cho họ vào app.'
+  );
+  window.open('mailto:${ADMIN_EMAIL}?subject=' + subject + '&body=' + body, '_blank');
+}
+
+async function doRegister(){
+  const name  = (document.getElementById('reg-name')?.value||'').trim();
+  const email = (document.getElementById('reg-email')?.value||'').trim().toLowerCase();
+  const phone = (document.getElementById('reg-phone')?.value||'').trim();
+  const pass  = document.getElementById('reg-pass')?.value||'';
+  const pass2 = document.getElementById('reg-pass2')?.value||'';
+
+  if(!name){showAuthErr('Vui lòng nhập họ tên.');return;}
+  if(!validateEmail(email)){showAuthErr('Email không hợp lệ.');return;}
+  if(pass.length < 6){showAuthErr('Mật khẩu tối thiểu 6 ký tự.');return;}
+  if(pass !== pass2){showAuthErr('Mật khẩu nhập lại không khớp.');return;}
+
+  const btn = document.getElementById('btn-register');
+  if(btn){btn.disabled=true;btn.textContent='Đang xử lý...';}
+
+  try{
+    // Kiểm tra email đã tồn tại chưa
+    const users = getUsers();
+    if(users[email]){showAuthErr('Email này đã có tài khoản.');return;}
+
+    // Tạo OTP và lưu thông tin pending
+    const otp = generateOTP();
+    _pendingOtpEmail = email;
+    _pendingOtpName  = name;
+    _pendingOtpPass  = pass;
+
+    // Lưu user tạm với status pending
+    users[email] = {pass, name, phone, status:'pending', createdAt:new Date().toISOString()};
+    saveUsers(users);
+
+    // Gửi OTP về admin
+    await sendOTPToAdmin(name, email, phone, otp);
+
+    showAuthOk('📧 Mã OTP đã gửi về admin. Liên hệ tuan.npa2706@gmail.com để nhận mã.');
+    // Chuyển sang màn hình nhập OTP
+    setTimeout(()=>{
+      clearAuthMsg();
+      showOTPForm();
+    }, 1500);
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent='Tạo tài khoản';}
+  }
+}
+
+function showOTPForm(){
+  document.getElementById('form-login').style.display='none';
+  document.getElementById('form-register').style.display='none';
+  document.getElementById('form-otp').style.display='block';
+  document.getElementById('form-forgot').style.display='none';
+  document.getElementById('auth-tabs').style.display='none';
+  document.getElementById('otp-input')?.focus();
+}
+
+async function verifyOTP(){
+  const inputOtp = (document.getElementById('otp-input')?.value||'').trim();
+  if(inputOtp.length !== 6){showAuthErr('Vui lòng nhập đủ 6 số.');return;}
+
+  const btn = document.getElementById('btn-otp');
+  if(btn){btn.disabled=true;btn.textContent='Đang xác nhận...';}
+
+  try{
+    // Check OTP từ Supabase
+    const { data } = await sb.from('otp_requests')
+      .select('*')
+      .eq('email', _pendingOtpEmail)
+      .eq('otp_code', inputOtp)
+      .eq('used', false)
+      .gte('expires_at', new Date().toISOString())
+      .maybeSingle();
+
+    if(!data){
+      showAuthErr('Mã OTP không đúng hoặc đã hết hạn.');
+      return;
+    }
+
+    // OTP đúng → approve user
+    const users = getUsers();
+    if(users[_pendingOtpEmail]){
+      users[_pendingOtpEmail].status = 'approved';
+      saveUsers(users);
+    }
+
+    // Đánh dấu OTP đã dùng
+    await sb.from('otp_requests').update({used:true}).eq('email', _pendingOtpEmail);
+
+    showAuthOk('✅ Xác nhận thành công! Đang đăng nhập...');
+    setTimeout(()=>loginUser(_pendingOtpEmail, _pendingOtpName), 1000);
+
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent='Xác nhận';}
+  }
+}
+
+async function resendOTP(){
+  if(!_pendingOtpEmail){switchAuthTab('register');return;}
+  const users = getUsers();
+  const u = users[_pendingOtpEmail];
+  const otp = generateOTP();
+  await sendOTPToAdmin(_pendingOtpName, _pendingOtpEmail, u?.phone||'', otp);
+  showAuthOk('Đã gửi lại mã OTP về admin.');
+}
 
 function getRate(c){ return {VND:1,USD:calcState.usdRate,EUR:calcState.eurRate,CHF:calcState.chfRate}[c]||calcState.usdRate; }
 
