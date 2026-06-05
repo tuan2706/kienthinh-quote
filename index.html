@@ -2346,35 +2346,54 @@ async function doRegister(){
   if(btn){btn.disabled=true;btn.textContent='Đang đăng ký...';}
 
   try{
-    // Đăng ký qua Supabase Auth - tự gửi email xác nhận
-    const { data, error } = await sb.auth.signUp({
-      email, password: pass,
-      options: {
-        data: { full_name: name, phone },
-        emailRedirectTo: 'https://tuan2706.github.io/kienthinh-quote/'
-      }
-    });
+    // Kiểm tra đã có trong pending hoặc đã là user chưa
+    const { data: existing } = await sb.from('pending_users')
+      .select('status').eq('email', email).maybeSingle();
 
-    if(error){
-      if(error.message.includes('already registered')){
-        showAuthErr('Email này đã có tài khoản. Vui lòng đăng nhập.');
+    if(existing){
+      if(existing.status === 'pending'){
+        showAuthErr('Email này đã đăng ký và đang chờ admin duyệt.');
+      } else if(existing.status === 'approved'){
+        showAuthErr('Tài khoản đã được duyệt. Vui lòng đăng nhập.');
       } else {
-        showAuthErr('Lỗi đăng ký: ' + error.message);
+        showAuthErr('Email này đã tồn tại. Vui lòng liên hệ admin.');
       }
       return;
     }
 
-    // Lưu thêm vào local users
-    const users = getUsers();
-    users[email] = {pass, name, phone, status:'pending', createdAt:new Date().toISOString()};
-    saveUsers(users);
+    // Lưu vào bảng pending_users - chờ admin duyệt
+    const { error: insertErr } = await sb.from('pending_users').insert({
+      email, full_name: name, phone, password: pass, status: 'pending'
+    });
 
-    // Lưu email để dùng khi verify OTP
-    _pendingOtpEmail = email;
-    // Chuyển sang form nhập OTP
+    if(insertErr){
+      showAuthErr('Lỗi đăng ký: ' + insertErr.message);
+      return;
+    }
+
+    // Thông báo chờ duyệt
+    document.getElementById('form-register').style.display = 'none';
+    document.getElementById('auth-tabs').style.display = 'none';
     clearAuthMsg();
-    showAuthOk('📧 Mã OTP đã gửi đến ' + email + ' — Kiểm tra cả thư mục Spam');
-    showOTPForm();
+    document.getElementById('auth-ok').style.display = 'block';
+    document.getElementById('auth-ok').innerHTML = `
+      <div style="text-align:center;padding:10px 0">
+        <div style="font-size:40px;margin-bottom:12px">⏳</div>
+        <div style="font-size:15px;font-weight:700;color:var(--accent2);margin-bottom:8px">Đăng ký thành công!</div>
+        <div style="font-size:13px;color:var(--text2);line-height:1.9">
+          Thông tin của bạn đã được ghi nhận.<br>
+          Admin sẽ xem xét và duyệt tài khoản.<br><br>
+          Sau khi được duyệt, bạn sẽ nhận được<br>
+          <b style="color:var(--accent2)">mã OTP qua email ${email}</b><br>
+          để kích hoạt tài khoản.<br><br>
+          <span style="color:var(--text3);font-size:12px">Liên hệ: tuan.npa2706@gmail.com</span>
+        </div>
+        <button class="auth-btn" style="margin-top:16px;background:var(--bg2);color:var(--text2)" 
+          onclick="document.getElementById('auth-tabs').style.display='flex';switchAuthTab('login')">
+          ← Quay lại đăng nhập
+        </button>
+      </div>
+    `;
 
   }finally{
     if(btn){btn.disabled=false;btn.textContent='Tạo tài khoản';}
@@ -3356,64 +3375,84 @@ function renderSettings(el){
   </div>`;
 }
 function renderUserMgmt(){
-  const users=getUsers();
-  const list=Object.entries(users).filter(([k])=>k!=='__guest__');
-  if(!list.length)return '<div style="color:var(--text3);font-size:12px;padding:10px 0">Chưa có tài khoản nào đăng ký.</div>';
-  const statusBadge={
-    pending:`<span style="background:rgba(240,179,85,0.15);color:#f0b355;padding:2px 9px;border-radius:20px;font-size:10px;font-weight:700">⏳ Chờ duyệt</span>`,
-    approved:`<span style="background:rgba(21,186,110,0.12);color:#15ba6e;padding:2px 9px;border-radius:20px;font-size:10px;font-weight:700">✅ Đã duyệt</span>`,
-    rejected:`<span style="background:rgba(233,69,69,0.12);color:#e94545;padding:2px 9px;border-radius:20px;font-size:10px;font-weight:700">❌ Từ chối</span>`,
-  };
-  return`<div style="overflow-x:auto">
-  <table style="width:100%;border-collapse:collapse;font-size:12px">
-    <thead><tr>
-      <th style="background:var(--bg2);color:var(--text3);padding:8px 10px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px">Họ tên</th>
-      <th style="background:var(--bg2);color:var(--text3);padding:8px 10px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px">Email</th>
-      <th style="background:var(--bg2);color:var(--text3);padding:8px 10px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px">SĐT</th>
-      <th style="background:var(--bg2);color:var(--text3);padding:8px 10px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px">Ngày đăng ký</th>
-      <th style="background:var(--bg2);color:var(--text3);padding:8px 10px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px">Trạng thái</th>
-      <th style="background:var(--bg2);padding:8px 10px"></th>
-    </tr></thead>
-    <tbody>${list.sort((a,b)=>new Date(b[1].createdAt)-new Date(a[1].createdAt)).map(([email,u])=>{
-      const st=u.status||'approved';
-      const date=u.createdAt?new Date(u.createdAt).toLocaleDateString('vi-VN'):'—';
-      return`<tr>
-        <td style="padding:9px 10px;border-bottom:1px solid var(--border);font-weight:600;color:var(--text)">${esc(u.name||'')}</td>
-        <td style="padding:9px 10px;border-bottom:1px solid var(--border);color:var(--text2)">${esc(email)}</td>
-        <td style="padding:9px 10px;border-bottom:1px solid var(--border);color:var(--text2)">${esc(u.phone||'—')}</td>
-        <td style="padding:9px 10px;border-bottom:1px solid var(--border);color:var(--text3);font-size:11px">${date}</td>
-        <td style="padding:9px 10px;border-bottom:1px solid var(--border)">${statusBadge[st]||statusBadge.pending}</td>
-        <td style="padding:9px 10px;border-bottom:1px solid var(--border)">
-          <div style="display:flex;gap:6px">
-            ${st!=='approved'?`<button class="btn btn-s" style="padding:3px 10px;font-size:10px" onclick="approveUser('${esc(email)}')">✅ Duyệt</button>`:''}
-            ${st!=='rejected'?`<button class="btn btn-danger" style="padding:3px 10px;font-size:10px" onclick="rejectUser('${esc(email)}')">❌ Từ chối</button>`:''}
-            <button class="btn btn-g" style="padding:3px 10px;font-size:10px;color:#f87171" onclick="deleteUser('${esc(email)}')">🗑</button>
-          </div>
-        </td>
-      </tr>`;
-    }).join('')}</tbody>
-  </table></div>`;
+  const el = document.getElementById('user-mgmt');
+  if(!el) return '<div style="color:var(--text3);font-size:12px">...</div>';
+  // Load từ Supabase
+  el.innerHTML = '<div style="color:var(--text3);font-size:12px;padding:10px">Đang tải...</div>';
+  sb.from('pending_users').select('*').order('created_at',{ascending:false})
+    .then(({data})=>{
+      if(!data?.length){
+        el.innerHTML='<div style="color:var(--text3);font-size:12px;padding:10px">Chưa có yêu cầu đăng ký nào.</div>';
+        return;
+      }
+      const statusBadge = {
+        pending: `<span style="background:rgba(240,179,85,0.15);color:#f0b355;padding:2px 9px;border-radius:20px;font-size:10px;font-weight:700">⏳ Chờ duyệt</span>`,
+        approved:`<span style="background:rgba(21,186,110,0.12);color:#15ba6e;padding:2px 9px;border-radius:20px;font-size:10px;font-weight:700">✅ Đã duyệt</span>`,
+        rejected:`<span style="background:rgba(233,69,69,0.12);color:#e94545;padding:2px 9px;border-radius:20px;font-size:10px;font-weight:700">❌ Từ chối</span>`,
+      };
+      el.innerHTML = `<div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:12px">
+          <thead><tr>
+            <th style="background:var(--bg2);color:var(--text3);padding:8px 10px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase">Họ tên</th>
+            <th style="background:var(--bg2);color:var(--text3);padding:8px 10px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase">Email</th>
+            <th style="background:var(--bg2);color:var(--text3);padding:8px 10px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase">SĐT</th>
+            <th style="background:var(--bg2);color:var(--text3);padding:8px 10px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase">Trạng thái</th>
+            <th style="background:var(--bg2);padding:8px 10px"></th>
+          </tr></thead>
+          <tbody>${data.map(u=>`<tr>
+            <td style="padding:9px 10px;border-bottom:1px solid var(--border);font-weight:600">${esc(u.full_name||'')}</td>
+            <td style="padding:9px 10px;border-bottom:1px solid var(--border);color:var(--text2)">${esc(u.email)}</td>
+            <td style="padding:9px 10px;border-bottom:1px solid var(--border);color:var(--text2)">${esc(u.phone||'—')}</td>
+            <td style="padding:9px 10px;border-bottom:1px solid var(--border)">${statusBadge[u.status]||statusBadge.pending}</td>
+            <td style="padding:9px 10px;border-bottom:1px solid var(--border)">
+              <div style="display:flex;gap:6px">
+                ${u.status==='pending'?`<button class="btn btn-s" style="padding:3px 10px;font-size:10px" onclick="approveUser('${u.email}','${esc(u.full_name||'')}','${u.password||''}')">✅ Duyệt</button>`:''}
+                ${u.status==='pending'?`<button class="btn btn-danger" style="padding:3px 10px;font-size:10px" onclick="rejectUser('${u.email}')">❌ Từ chối</button>`:''}
+              </div>
+            </td>
+          </tr>`).join('')}</tbody>
+        </table></div>`;
+    }).catch(e=>{
+      el.innerHTML='<div style="color:var(--danger);font-size:12px">Lỗi tải dữ liệu</div>';
+    });
+  return '';
 }
 
-function approveUser(email){
-  const users=getUsers();
-  if(!users[email])return;
-  users[email].status='approved';
-  saveUsers(users);
-  toast('Đã duyệt tài khoản','success',users[email].name||email);
-  const mgmt=document.getElementById('user-mgmt');
-  if(mgmt)mgmt.innerHTML=renderUserMgmt();
+
+async function approveUser(email, name, password){
+  if(!confirm('Duyệt và gửi OTP cho ' + email + '?')) return;
+  toast('Đang xử lý...','loading');
+
+  try{
+    // 1. Tạo tài khoản Supabase Auth
+    const { data, error } = await sb.auth.signUp({
+      email,
+      password: password || Math.random().toString(36).slice(-10),
+      options: { data: { full_name: name } }
+    });
+
+    if(error && !error.message.includes('already registered')){
+      toast('Lỗi tạo tài khoản: '+error.message,'error');
+      return;
+    }
+
+    // 2. Cập nhật status trong pending_users
+    await sb.from('pending_users').update({status:'approved'}).eq('email',email);
+
+    toast('✅ Đã duyệt! OTP đã gửi về '+email,'success');
+
+    // Reload danh sách
+    renderUserMgmt();
+  }catch(e){
+    toast('Lỗi: '+e.message,'error');
+  }
 }
 
-function rejectUser(email){
-  if(!confirm('Từ chối tài khoản '+email+'?'))return;
-  const users=getUsers();
-  if(!users[email])return;
-  users[email].status='rejected';
-  saveUsers(users);
-  toast('Đã từ chối tài khoản','warning',email);
-  const mgmt=document.getElementById('user-mgmt');
-  if(mgmt)mgmt.innerHTML=renderUserMgmt();
+async function rejectUser(email){
+  if(!confirm('Từ chối tài khoản '+email+'?')) return;
+  await sb.from('pending_users').update({status:'rejected'}).eq('email',email);
+  toast('Đã từ chối','warning',email);
+  renderUserMgmt();
 }
 
 function deleteUser(email){
