@@ -3379,11 +3379,13 @@ function renderUserMgmt(){
   if(!el) return '<div style="color:var(--text3);font-size:12px">...</div>';
   // Load từ Supabase
   el.innerHTML = '<div style="color:var(--text3);font-size:12px;padding:10px">Đang tải...</div>';
-  if(!window.sb){ el.innerHTML='<div style="color:var(--danger);font-size:12px;padding:10px">Lỗi: Supabase chưa khởi tạo</div>'; return; }
-  sb.from('pending_users').select('*').order('created_at',{ascending:false})
-    .then(({data, error})=>{
-      if(error){ el.innerHTML='<div style="color:var(--danger);font-size:12px;padding:10px">Lỗi: '+error.message+'</div>'; return; }
-      if(!data?.length){
+  // Dùng fetch trực tiếp để tránh vấn đề với sb object
+  const SB_URL_R = 'https://tqszgfgbshbxmrlsbimq.supabase.co';
+  const SB_KEY_R = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRxc3pnZmdic2hieG1ybHNiaW1xIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA2MzY4OTcsImV4cCI6MjA5NjIxMjg5N30.tN4aogsOL-c6_ZVMhAeqjqeNm4TGX7kgFgXWtktfrWs';
+  fetch(SB_URL_R+'/rest/v1/pending_users?select=*&order=created_at.desc', {
+    headers: { 'apikey': SB_KEY_R, 'Authorization': 'Bearer '+SB_KEY_R }
+  }).then(r=>r.json()).then(data=>{
+      if(!Array.isArray(data)||!data.length){
         el.innerHTML='<div style="color:var(--text3);font-size:12px;padding:10px">Chưa có yêu cầu đăng ký nào.</div>';
         return;
       }
@@ -3415,7 +3417,7 @@ function renderUserMgmt(){
           </tr>`).join('')}</tbody>
         </table></div>`;
     }).catch(e=>{
-      el.innerHTML='<div style="color:var(--danger);font-size:12px">Lỗi tải dữ liệu</div>';
+      el.innerHTML='<div style="color:var(--danger);font-size:12px;padding:10px">Lỗi: '+e.message+'</div>';
     });
   return '';
 }
