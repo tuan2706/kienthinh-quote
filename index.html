@@ -1275,14 +1275,43 @@ async function doLogin(){
   const pass=document.getElementById('login-pass').value||'';
   if(!email||!pass){showAuthErr('Vui lòng nhập email và mật khẩu.');return;}
   if(!validateEmail(email)){showAuthErr('Email không hợp lệ.');return;}
-  // Show loading
+
   const btn=document.getElementById('btn-login');
   if(btn){btn.disabled=true;btn.textContent='Đang đăng nhập...';}
+
   try{
-    const users=await cloudGetUsers();
-    if(!users[email]){showAuthErr('Email chưa được đăng ký.');return;}
-    if(users[email].pass!==pass){showAuthErr('Mật khẩu không đúng.');return;}
-    loginUser(email,users[email].name||email);
+    // Đăng nhập qua Supabase Auth
+    const { data, error } = await sb.auth.signInWithPassword({ email, password: pass });
+
+    if(error){
+      if(error.message.includes('Email not confirmed')){
+        showAuthErr('Email chưa được xác nhận. Kiểm tra hộp thư và bấm link xác nhận.');
+      } else if(error.message.includes('Invalid login')){
+        showAuthErr('Email hoặc mật khẩu không đúng.');
+      } else {
+        showAuthErr('Lỗi đăng nhập: ' + error.message);
+      }
+      return;
+    }
+
+    const user = data.user;
+    const displayName = user.user_metadata?.full_name || user.email;
+
+    // Lưu local
+    const users = getUsers();
+    if(!users[email]){
+      users[email] = {
+        name: displayName,
+        phone: user.user_metadata?.phone||'',
+        status: 'approved',
+        createdAt: user.created_at
+      };
+      saveUsers(users);
+    }
+
+    loginUser(email, displayName);
+    setTimeout(()=>sbInit(), 800);
+
   }finally{
     if(btn){btn.disabled=false;btn.textContent='Đăng nhập';}
   }
@@ -2302,32 +2331,38 @@ async function doRegister(){
   if(pass !== pass2){showAuthErr('Mật khẩu nhập lại không khớp.');return;}
 
   const btn = document.getElementById('btn-register');
-  if(btn){btn.disabled=true;btn.textContent='Đang xử lý...';}
+  if(btn){btn.disabled=true;btn.textContent='Đang đăng ký...';}
 
   try{
-    // Kiểm tra email đã tồn tại chưa
+    // Đăng ký qua Supabase Auth - tự gửi email xác nhận
+    const { data, error } = await sb.auth.signUp({
+      email, password: pass,
+      options: {
+        data: { full_name: name, phone },
+        emailRedirectTo: 'https://tuan2706.github.io/kienthinh-quote/'
+      }
+    });
+
+    if(error){
+      if(error.message.includes('already registered')){
+        showAuthErr('Email này đã có tài khoản. Vui lòng đăng nhập.');
+      } else {
+        showAuthErr('Lỗi đăng ký: ' + error.message);
+      }
+      return;
+    }
+
+    // Lưu thêm vào local users
     const users = getUsers();
-    if(users[email]){showAuthErr('Email này đã có tài khoản.');return;}
-
-    // Tạo OTP và lưu thông tin pending
-    const otp = generateOTP();
-    _pendingOtpEmail = email;
-    _pendingOtpName  = name;
-    _pendingOtpPass  = pass;
-
-    // Lưu user tạm với status pending
     users[email] = {pass, name, phone, status:'pending', createdAt:new Date().toISOString()};
     saveUsers(users);
 
-    // Gửi OTP về admin
-    await sendOTPToAdmin(name, email, phone, otp);
-
-    showAuthOk('📧 Mã OTP đã gửi về admin. Liên hệ tuan.npa2706@gmail.com để nhận mã.');
-    // Chuyển sang màn hình nhập OTP
+    showAuthOk('📧 Đăng ký thành công! Vui lòng kiểm tra email ' + email + ' để xác nhận tài khoản.');
     setTimeout(()=>{
-      clearAuthMsg();
-      showOTPForm();
-    }, 1500);
+      switchAuthTab('login');
+      document.getElementById('login-email').value = email;
+    }, 3000);
+
   }finally{
     if(btn){btn.disabled=false;btn.textContent='Tạo tài khoản';}
   }
