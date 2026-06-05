@@ -1016,7 +1016,7 @@ select option{background:var(--bg2);}
       <div class="nav-icon">📈</div>Báo cáo
     </button>
     <div class="nav-section">Cài đặt</div>
-    <button class="nav-btn" id="nb-set" onclick="goPage('settings')">
+    <button class="nav-btn" id="nb-set" onclick="goPage('settings');setTimeout(renderUserMgmt,600)">
       <div class="nav-icon">⚙️</div>Thông tin công ty
     </button>
     <div class="edit-badge" id="edit-badge">✏️ Đang chỉnh sửa<br><span id="edit-num" style="font-weight:700"></span></div>
