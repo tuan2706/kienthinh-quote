@@ -3379,8 +3379,10 @@ function renderUserMgmt(){
   if(!el) return '<div style="color:var(--text3);font-size:12px">...</div>';
   // Load từ Supabase
   el.innerHTML = '<div style="color:var(--text3);font-size:12px;padding:10px">Đang tải...</div>';
+  if(!window.sb){ el.innerHTML='<div style="color:var(--danger);font-size:12px;padding:10px">Lỗi: Supabase chưa khởi tạo</div>'; return; }
   sb.from('pending_users').select('*').order('created_at',{ascending:false})
-    .then(({data})=>{
+    .then(({data, error})=>{
+      if(error){ el.innerHTML='<div style="color:var(--danger);font-size:12px;padding:10px">Lỗi: '+error.message+'</div>'; return; }
       if(!data?.length){
         el.innerHTML='<div style="color:var(--text3);font-size:12px;padding:10px">Chưa có yêu cầu đăng ký nào.</div>';
         return;
