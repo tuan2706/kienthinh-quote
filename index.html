@@ -2237,25 +2237,56 @@ function generateOTP(){
 }
 
 async function sendOTPToAdmin(name, email, phone, otp){
-  // Lưu OTP vào Supabase (bảng otp_requests)
-  const expiry = new Date(Date.now() + 30*60*1000).toISOString(); // 30 phút
+  // 1. Lưu OTP vào Supabase
+  const expiry = new Date(Date.now() + 30*60*1000).toISOString();
   await sb.from('otp_requests').upsert({
     email, otp_code: otp, name, phone,
     expires_at: expiry, used: false
   }, {onConflict:'email'});
 
-  // Gửi email về admin qua mailto
+  // 2. Gửi email qua EmailJS (tự động, không cần bấm Send)
+  const ejs = window.emailjs;
+  const ejsPK  = company?.emailjsPK  || '';
+  const ejsSID = company?.emailjsSID || '';
+  const ejsTID = company?.emailjsTID || '';
+
+  if(ejs && ejsPK && ejsSID && ejsTID){
+    try{
+      ejs.init({publicKey: ejsPK});
+      await ejs.send(ejsSID, ejsTID, {
+        to_email:   'tuan.npa2706@gmail.com',
+        to_name:    'Admin Kiên Thịnh',
+        subject:    '[KT Quote] OTP đăng ký mới: ' + name,
+        user_name:  name,
+        user_email: email,
+        user_phone: phone,
+        otp_code:   otp,
+        registered_at: new Date().toLocaleString('vi-VN'),
+      });
+      toast('📧 Mã OTP đã gửi về email admin','success');
+      return;
+    }catch(e){
+      console.warn('EmailJS failed:', e);
+    }
+  }
+
+  // 3. Fallback: mailto (nếu EmailJS chưa cấu hình)
   const subject = encodeURIComponent('[KT Quote] Đăng ký mới - OTP: ' + otp);
-  const body = encodeURIComponent(
-    'Có người dùng mới đăng ký Kiên Thịnh Quote:\n\n' +
-    'Họ tên: ' + name + '\n' +
-    'Email: ' + email + '\n' +
-    'SĐT: ' + phone + '\n\n' +
-    '🔑 MÃ OTP: ' + otp + '\n\n' +
-    'Mã có hiệu lực 30 phút.\n' +
-    'Gửi mã này cho người dùng nếu bạn đồng ý cho họ vào app.'
-  );
-  window.open('mailto:${ADMIN_EMAIL}?subject=' + subject + '&body=' + body, '_blank');
+  const bodyLines = [
+    'Có người dùng mới đăng ký Kiên Thịnh Quote:',
+    '',
+    'Họ tên: ' + name,
+    'Email: ' + email,
+    'SĐT: ' + phone,
+    '',
+    'MA OTP: ' + otp,
+    '',
+    'Ma co hieu luc 30 phut.',
+    'Gui ma nay cho nguoi dung neu ban dong y.',
+  ];
+  const body = encodeURIComponent(bodyLines.join('%0A'));
+  window.open('mailto:tuan.npa2706@gmail.com?subject=' + subject + '&body=' + body, '_blank');
+  toast('📧 Gmail đã mở - bấm Send để gửi OTP','info');
 }
 
 async function doRegister(){
