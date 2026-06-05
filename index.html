@@ -949,8 +949,8 @@ select option{background:var(--bg2);}
       </div>
       <label class="auth-lbl">NHẬP MÃ OTP (6 SỐ)</label>
       <input class="auth-inp" id="otp-input" type="text" inputmode="numeric" 
-        maxlength="6" placeholder="_ _ _ _ _ _" 
-        style="text-align:center;font-size:24px;letter-spacing:8px;font-weight:700">
+        maxlength="8" placeholder="_ _ _ _ _ _ _ _" 
+        style="text-align:center;font-size:24px;letter-spacing:6px;font-weight:700">
       <button class="auth-btn" id="btn-otp">Xác nhận</button>
       <div style="text-align:center;margin-top:10px">
         <span class="auth-link" id="link-resend-otp" style="font-size:12px">Gửi lại mã</span>
@@ -1526,12 +1526,24 @@ window.addEventListener('DOMContentLoaded',()=>{
   // Lắng nghe auth state changes
   sb.auth.onAuthStateChange((event, session) => {
     if(event === 'SIGNED_IN' && session?.user){
-      LS.set('bgpro:displayName', session.user.user_metadata?.name || session.user.email);
-      const dn = session.user.user_metadata?.name || session.user.email;
-      const av = dn.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
-      const topAv=document.getElementById('topbar-avatar'); if(topAv)topAv.textContent=av;
-      const topNm=document.getElementById('topbar-user-name'); if(topNm)topNm.textContent=dn;
+      const dn = session.user.user_metadata?.full_name || session.user.user_metadata?.name || session.user.email;
+      LS.set('bgpro:displayName', dn);
+      // Lưu local users
+      const users = getUsers();
+      const email = session.user.email;
+      if(!users[email]){
+        users[email] = {name:dn, status:'approved', createdAt:session.user.created_at};
+        saveUsers(users);
+      } else {
+        users[email].status = 'approved';
+        saveUsers(users);
+      }
+      // Đăng nhập luôn
+      loginUser(email, dn);
       setTimeout(()=>sbInit(), 500);
+    }
+    if(event === 'PASSWORD_RECOVERY'){
+      // Xử lý reset mật khẩu nếu cần
     }
   });
 });
@@ -2357,11 +2369,12 @@ async function doRegister(){
     users[email] = {pass, name, phone, status:'pending', createdAt:new Date().toISOString()};
     saveUsers(users);
 
-    showAuthOk('📧 Đăng ký thành công! Vui lòng kiểm tra email ' + email + ' để xác nhận tài khoản.');
-    setTimeout(()=>{
-      switchAuthTab('login');
-      document.getElementById('login-email').value = email;
-    }, 3000);
+    // Lưu email để dùng khi verify OTP
+    _pendingOtpEmail = email;
+    // Chuyển sang form nhập OTP
+    clearAuthMsg();
+    showAuthOk('📧 Mã OTP đã gửi đến ' + email + ' — Kiểm tra cả thư mục Spam');
+    showOTPForm();
 
   }finally{
     if(btn){btn.disabled=false;btn.textContent='Tạo tài khoản';}
@@ -2379,38 +2392,51 @@ function showOTPForm(){
 
 async function verifyOTP(){
   const inputOtp = (document.getElementById('otp-input')?.value||'').trim();
-  if(inputOtp.length !== 6){showAuthErr('Vui lòng nhập đủ 6 số.');return;}
+  if(inputOtp.length < 6){showAuthErr('Vui lòng nhập đủ mã OTP.');return;}
 
   const btn = document.getElementById('btn-otp');
   if(btn){btn.disabled=true;btn.textContent='Đang xác nhận...';}
 
   try{
-    // Check OTP từ Supabase
-    const { data } = await sb.from('otp_requests')
-      .select('*')
-      .eq('email', _pendingOtpEmail)
-      .eq('otp_code', inputOtp)
-      .eq('used', false)
-      .gte('expires_at', new Date().toISOString())
-      .maybeSingle();
+    // Dùng Supabase verifyOtp
+    const { data, error } = await sb.auth.verifyOtp({
+      email: _pendingOtpEmail,
+      token: inputOtp,
+      type: 'signup'
+    });
 
-    if(!data){
-      showAuthErr('Mã OTP không đúng hoặc đã hết hạn.');
-      return;
+    if(error){
+      // Thử type email nếu signup không đúng
+      const { data:d2, error:e2 } = await sb.auth.verifyOtp({
+        email: _pendingOtpEmail,
+        token: inputOtp,
+        type: 'email'
+      });
+      if(e2){
+        showAuthErr('Mã OTP không đúng hoặc đã hết hạn. Vui lòng thử lại.');
+        return;
+      }
     }
 
-    // OTP đúng → approve user
+    // Thành công
+    const user = data?.user || (await sb.auth.getUser()).data?.user;
+    const displayName = user?.user_metadata?.full_name || _pendingOtpName || _pendingOtpEmail;
+
+    // Lưu local
     const users = getUsers();
-    if(users[_pendingOtpEmail]){
-      users[_pendingOtpEmail].status = 'approved';
-      saveUsers(users);
-    }
-
-    // Đánh dấu OTP đã dùng
-    await sb.from('otp_requests').update({used:true}).eq('email', _pendingOtpEmail);
+    users[_pendingOtpEmail] = {
+      name: displayName,
+      pass: _pendingOtpPass,
+      status: 'approved',
+      createdAt: new Date().toISOString()
+    };
+    saveUsers(users);
 
     showAuthOk('✅ Xác nhận thành công! Đang đăng nhập...');
-    setTimeout(()=>loginUser(_pendingOtpEmail, _pendingOtpName), 1000);
+    setTimeout(()=>{
+      loginUser(_pendingOtpEmail, displayName);
+      setTimeout(()=>sbInit(), 800);
+    }, 1000);
 
   }finally{
     if(btn){btn.disabled=false;btn.textContent='Xác nhận';}
