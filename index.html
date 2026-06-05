@@ -1379,7 +1379,7 @@ function loginUser(user,name){
       if(!cloudData){
         // Chưa có bin trên cloud → tạo bin và upload data local lên
         console.log('No cloud data, uploading local data...');
-        syncUserDataToCloud();
+        sbAutoSync();
         return;
       }
       // Merge: dùng cloud nếu có quotes nhiều hơn hoặc mới hơn
@@ -1402,9 +1402,9 @@ function loginUser(user,name){
         toast('Đồng bộ từ cloud','success', cloudQs.length+' báo giá');
       } else if(localQs.length > cloudQs.length){
         // Local có nhiều hơn → push lên cloud
-        syncUserDataToCloud();
+        sbAutoSync();
       }
-    }).catch(e=>{ console.warn('Cloud load error:', e); syncUserDataToCloud(); });
+    }).catch(e=>{ console.warn('Cloud load error:', e); sbAutoSync(); });
   }
   // Get stored profile
   const users=getUsers();
@@ -1742,7 +1742,7 @@ function openQ(id){cq={...quotes.find(q=>q.id===id)};goPage('editor');}
 function delQ(id){
   const q=quotes.find(x=>x.id===id);
   if(!confirm('Xoá báo giá '+(q?.num||id)+'?'))return;
-  quotes=quotes.filter(x=>x.id!==id);ULS.set(KEYS.qs,quotes);syncUserDataToCloud();updateSB();fDash();toast('Đã xoá báo giá','warning');
+  quotes=quotes.filter(x=>x.id!==id);ULS.set(KEYS.qs,quotes);sbAutoSync();updateSB();fDash();toast('Đã xoá báo giá','warning');
 }
 
 // ── EDITOR ───────────────────────────────────────────────────
@@ -1959,7 +1959,7 @@ function saveQ(st){
   const idx=quotes.findIndex(q=>q.id===cq.id);
   if(idx>=0)quotes[idx]={...cq};else quotes.unshift({...cq});
   ULS.set(KEYS.qs,quotes);updateSB();
-  syncUserDataToCloud();
+  sbAutoSync();
   toast('Đã lưu báo giá','success','Số: '+cq.num);
   document.getElementById('edit-badge').style.display='block';
   document.getElementById('edit-num').textContent=cq.num||'';
@@ -1988,7 +1988,7 @@ let calcState = ULS.get('calc') || {
   profitTarget: 13600000,
   sellPrice: 13600000,
 };
-function saveCalc(){ULS.set(KEYS.calc||'calc',calcState);syncUserDataToCloud();}
+function saveCalc(){ULS.set(KEYS.calc||'calc',calcState);sbAutoSync();}
 function fmVND(n){return '₫'+new Intl.NumberFormat('vi-VN').format(Math.round(n||0));}
 function fmPct(n){return (n||0).toFixed(1)+'%';}
 function itemVND(it){ const rate=(it.currency||'USD')==='VND'?1:getRate(it.currency||'USD'); return (it.qty||0)*(it.priceFC||0)*(it.factor||0)*rate; }
@@ -3040,7 +3040,7 @@ function saveCatModal(editIdx){
   }
 
   ULS.set(KEYS.cat, catalog);
-  syncUserDataToCloud();
+  sbAutoSync();
   document.getElementById('cat-modal-form')?.remove();
   renderCatalog(document.getElementById('content'));
 }
@@ -3074,7 +3074,7 @@ function importExcel(inp){
       if(!parsed.length){toast('Không tìm thấy dữ liệu','error','Kiểm tra lại cấu trúc cột');return;}
       catalog=parsed;
       UULS.set(KEYS.cat,catalog);
-      syncUserDataToCloud();
+      sbAutoSync();
       renderCatalog(document.getElementById('content'));
       toast('Import thành công','success',parsed.length+' thiết bị đã tải lên');
     }catch(err){toast('❌ Lỗi đọc file: '+err.message);}
@@ -3337,36 +3337,7 @@ function renderSettings(el){
     </div>
     <button class="btn btn-p" style="font-size:14px;padding:10px 26px" onclick="saveCo()">💾 Lưu thông tin công ty</button>
 
-    <!-- Cloud Storage Config -->
-    <div class="card" style="margin-top:14px">
-      <div class="card-title"><span class="ct-dot"></span>Đồng bộ tài khoản đa thiết bị</div>
 
-      <div style="background:${getJBKey()?'var(--success-bg)':'rgba(59,158,255,0.06)'};border:1px solid ${getJBKey()?'rgba(21,186,110,0.2)':'rgba(59,158,255,0.2)'};border-radius:9px;padding:11px 14px;margin-bottom:14px;font-size:12px;color:${getJBKey()?'var(--success)':'var(--info)'};line-height:1.6">
-        ${getJBKey()
-          ? '✅ Đang đồng bộ JSONBin — mọi thiết bị dùng cùng Master Key sẽ thấy chung danh sách tài khoản'
-          : '📱 Chưa đồng bộ — tài khoản chỉ lưu trên thiết bị này'}
-      </div>
-
-      <div style="font-size:12px;color:var(--text2);line-height:1.9;margin-bottom:14px;padding:11px 13px;background:var(--bg);border:1px solid var(--border);border-radius:9px">
-        <b style="color:var(--accent2)">Cách lấy Master Key từ JSONBin.io:</b><br>
-        1. Đăng nhập tại <a href="https://jsonbin.io" target="_blank" style="color:var(--accent2);font-weight:600">jsonbin.io</a><br>
-        2. Bấm vào <b>icon tài khoản</b> (góc trên phải) → chọn <b>"API Keys"</b><br>
-        3. Mục <b>"Secret Key"</b> → bấm <b>"Show Key"</b> → copy chuỗi bắt đầu bằng <code style="background:var(--border);padding:1px 6px;border-radius:4px">$2a$10$...</code><br>
-        4. Dán vào ô bên dưới → bấm <b>Lưu & Kích hoạt</b><br>
-        <span style="color:var(--text3)">Dùng cùng key trên mọi thiết bị là đồng bộ tài khoản ngay.</span>
-      </div>
-
-      <div class="fg" style="margin-bottom:11px">
-        <label class="lbl">JSONBin Master Key (Secret Key)</label>
-        <input class="inp" id="jb-key" placeholder="$2a$10$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..." value="${esc(getJBKey()||'')}" type="password">
-      </div>
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <button class="btn btn-p" onclick="saveJBKey()">💾 Lưu & Kích hoạt</button>
-        ${getJBKey()?`<button class="btn btn-g" onclick="testJBSync()" style="font-size:11px">🔄 Test kết nối</button>`:''}
-        ${getJBKey()?`<button class="btn btn-danger" style="padding:8px 14px;font-size:12px" onclick="removeJBKey()">✕ Tắt đồng bộ</button>`:''}
-        <a href="https://jsonbin.io" target="_blank" class="btn btn-g" style="font-size:11px;text-decoration:none">🔗 jsonbin.io</a>
-      </div>
-    </div>
     <!-- Quản lý tài khoản -->
     <div class="card" style="margin-top:14px">
       <div class="card-title"><span class="ct-dot"></span>Quản lý tài khoản đăng ký</div>
@@ -3701,7 +3672,7 @@ function saveCo(){
   // Refresh company tag in sidebar immediately
   const ctag=document.getElementById('sb-company-tag');
   if(ctag&&company.name){ctag.textContent='🏢 '+company.name;ctag.style.display='block';}
-  syncUserDataToCloud();sbAutoSync();
+  sbAutoSync();
   toast('Đã lưu thông tin công ty','success','Cập nhật thành công');
 }
 
