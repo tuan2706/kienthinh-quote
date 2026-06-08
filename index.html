@@ -3437,7 +3437,7 @@ function renderSettings(el){
           <input type="file" id="li" accept="image/*" style="display:none" onchange="handleLogo(this)">
           <div style="display:flex;gap:8px">
             <button class="btn btn-g" style="font-size:11px;padding:6px 12px" onclick="document.getElementById('li').click()">📁 Chọn ảnh</button>
-            ${c.logoDataUrl?`<button class="btn btn-danger" style="font-size:11px;padding:6px 10px" onclick="company.logoDataUrl='';ULS.set(KEYS.co,company);renderSettings(document.getElementById('content'));toast('🗑 Đã xoá logo')">✕ Xoá</button>`:''}
+            ${c.logoDataUrl?`<button class="btn btn-danger" style="font-size:11px;padding:6px 10px" onclick="company.logoDataUrl='';ULS.set(KEYS.co,company);sbAutoSync();renderSettings(document.getElementById('content'));toast('Đã xoá logo','warning')";toast('🗑 Đã xoá logo')">✕ Xoá</button>`:''}
           </div>
         </div>
         <div style="flex:1;min-width:200px">
@@ -3780,7 +3780,16 @@ async function testJBSync(){
 
 function handleLogo(inp){
   if(!inp.files[0])return;
-  const r=new FileReader();r.onload=e=>{company.logoDataUrl=e.target.result;renderSettings(document.getElementById('content'));};r.readAsDataURL(inp.files[0]);
+  const r=new FileReader();
+  r.onload=e=>{
+    company.logoDataUrl=e.target.result;
+    // Lưu ngay vào localStorage
+    ULS.set(KEYS.co, company);
+    sbAutoSync();
+    renderSettings(document.getElementById('content'));
+    toast('Đã lưu logo','success');
+  };
+  r.readAsDataURL(inp.files[0]);
 }
 function saveDisplayName(){
   const val=(document.getElementById('display-name-inp')?.value||'').trim();
