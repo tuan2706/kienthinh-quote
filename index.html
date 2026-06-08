@@ -1612,7 +1612,7 @@ let catalog=ULS.get(KEYS.cat)||[]; // [{code,name,unit,price,brand,specs}]
 let cq=null; // current quote being edited
 
 const bq=()=>({
-  id:Date.now(),num:nqn(),date:tod(),expiry:dl(30),currency:'VND',vatPct:10,discPct:0,notes:'',
+  id:Date.now(),num:nqn(),date:tod(),expiry:dl(30),currency:'VND',vatPct:10,discPct:0,notes:'',profitPct:0,
   clientName:'',clientContact:'',clientPhone:'',clientAddr:'',clientEmail:'',
   bankName:company.bankName||'',bankBranch:company.bankBranch||'',bankHolder:company.bankHolder||'',bankAcct:company.bankAcct||'',
   signedBy:company.contact||'',signedTitle:'',
@@ -1822,6 +1822,14 @@ function renderEditor(el){
           <select class="sel" style="width:96px" onchange="cq.vatPct=+this.value;refreshTot()">${vaOpts}</select></div>
         <div style="display:flex;align-items:center;gap:6px"><label class="lbl" style="margin:0">CK%</label>
           <input class="inp" type="number" min="0" max="100" style="width:60px;text-align:right" value="${q.discPct}" oninput="cq.discPct=+this.value;refreshTot()"></div>
+        <div style="display:flex;align-items:center;gap:6px" title="Điều chỉnh lợi nhuận cho tất cả sản phẩm trong báo giá này">
+          <label class="lbl" style="margin:0;white-space:nowrap">LN%</label>
+          <input class="inp" type="number" min="-100" max="1000" style="width:60px;text-align:right" 
+            value="${q.profitPct||0}" placeholder="0"
+            title="Lợi nhuận mong muốn (%). Nhập số để tự động điều chỉnh đơn giá tất cả sản phẩm."
+            oninput="applyProfitPct(+this.value)">
+          <span style="font-size:10px;color:var(--text3)">lợi nhuận</span>
+        </div>
         <button class="btn btn-p" onclick="ai()">＋ Thêm dòng</button>
       </div>
     </div>
@@ -1922,6 +1930,40 @@ function buildTH(t,q){
   h+=`<div class="tg"><span class="tl2">TỔNG CỘNG</span><span class="tv">${fm(t.grand,q.currency)}</span></div>`;
   return h;
 }
+// Áp dụng lợi nhuận mong muốn - điều chỉnh đơn giá theo tỉ lệ
+function applyProfitPct(pct){
+  if(!cq || !cq.items) return;
+  cq.profitPct = pct;
+
+  // Lấy giá gốc từ danh mục (base price)
+  cq.items.forEach(it=>{
+    if(!it.name && !it.code) return;
+
+    // Tìm giá gốc từ danh mục
+    const catItem = catalog.find(p =>
+      (it.code && p.code === it.code) ||
+      (it.name && p.name === it.name)
+    );
+
+    if(catItem && catItem.price > 0){
+      // Tính giá mới = giá danh mục * (1 + lợi nhuận/100)
+      const basePrice = catItem.price;
+      const newPrice = Math.round(basePrice * (1 + pct/100));
+      it.price = newPrice;
+      // Cập nhật UI
+      const pi = document.getElementById('iprice-'+it.id);
+      if(pi){
+        pi.value = newPrice > 0 ? newPrice.toLocaleString('vi-VN') : '';
+        pi.dispatchEvent(new Event('input'));
+      }
+    }
+  });
+
+  refreshTot();
+  toast('Đã áp dụng lợi nhuận '+pct+'%', 'success',
+    cq.items.filter(it=>it.price>0).length + ' sản phẩm được điều chỉnh giá');
+}
+
 function refreshTot(){
   const t=ct(cq.items,cq.discPct,cq.vatPct);const cur=cq.currency||'VND';
   document.querySelectorAll('[id^="it-"]').forEach(el=>{
