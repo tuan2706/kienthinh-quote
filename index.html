@@ -1280,35 +1280,55 @@ async function doLogin(){
   if(btn){btn.disabled=true;btn.textContent='Đang đăng nhập...';}
 
   try{
-    // Đăng nhập qua Supabase Auth
-    const { data, error } = await sb.auth.signInWithPassword({ email, password: pass });
+    // Kiểm tra trong pending_users
+    const { data: pending } = await sb.from('pending_users')
+      .select('*').eq('email', email).maybeSingle();
 
+    if(pending){
+      if(pending.status === 'pending'){
+        showAuthErr('⏳ Tài khoản đang chờ admin duyệt.');
+        return;
+      }
+      if(pending.status === 'rejected'){
+        showAuthErr('❌ Tài khoản đã bị từ chối. Liên hệ: tuan.npa2706@gmail.com');
+        return;
+      }
+      if(pending.status === 'approved'){
+        // Kiểm tra mật khẩu
+        if(pending.password !== pass){
+          showAuthErr('Mật khẩu không đúng.');
+          return;
+        }
+        // Đăng nhập thành công
+        const displayName = pending.full_name || email;
+        const users = getUsers();
+        users[email] = {name:displayName, phone:pending.phone||'', status:'approved', createdAt:pending.created_at};
+        saveUsers(users);
+        showAuthOk('✅ Đăng nhập thành công!');
+        setTimeout(()=>{
+          loginUser(email, displayName);
+          setTimeout(()=>sbInit(), 800);
+        }, 500);
+        return;
+      }
+    }
+
+    // Thử đăng nhập qua Supabase Auth (cho admin)
+    const { data, error } = await sb.auth.signInWithPassword({ email, password: pass });
     if(error){
-      if(error.message.includes('Email not confirmed')){
-        showAuthErr('Email chưa được xác nhận. Kiểm tra hộp thư và bấm link xác nhận.');
-      } else if(error.message.includes('Invalid login')){
-        showAuthErr('Email hoặc mật khẩu không đúng.');
+      if(error.message.includes('Invalid login') || error.message.includes('invalid')){
+        showAuthErr('Email chưa đăng ký hoặc mật khẩu không đúng.');
       } else {
-        showAuthErr('Lỗi đăng nhập: ' + error.message);
+        showAuthErr('Lỗi: ' + error.message);
       }
       return;
     }
 
     const user = data.user;
-    const displayName = user.user_metadata?.full_name || user.email;
-
-    // Lưu local
+    const displayName = user.user_metadata?.full_name || user.user_metadata?.name || email;
     const users = getUsers();
-    if(!users[email]){
-      users[email] = {
-        name: displayName,
-        phone: user.user_metadata?.phone||'',
-        status: 'approved',
-        createdAt: user.created_at
-      };
-      saveUsers(users);
-    }
-
+    users[email] = {name:displayName, status:'approved', createdAt:user.created_at};
+    saveUsers(users);
     loginUser(email, displayName);
     setTimeout(()=>sbInit(), 800);
 
@@ -2346,7 +2366,7 @@ async function doRegister(){
   if(btn){btn.disabled=true;btn.textContent='Đang đăng ký...';}
 
   try{
-    // Kiểm tra đã có trong pending hoặc đã là user chưa
+    // Kiểm tra đã có trong pending chưa
     const { data: existing } = await sb.from('pending_users')
       .select('status').eq('email', email).maybeSingle();
 
@@ -2356,12 +2376,12 @@ async function doRegister(){
       } else if(existing.status === 'approved'){
         showAuthErr('Tài khoản đã được duyệt. Vui lòng đăng nhập.');
       } else {
-        showAuthErr('Email này đã tồn tại. Vui lòng liên hệ admin.');
+        showAuthErr('Email này đã bị từ chối. Liên hệ admin.');
       }
       return;
     }
 
-    // Lưu vào bảng pending_users - chờ admin duyệt
+    // Lưu vào pending_users - chờ admin duyệt
     const { error: insertErr } = await sb.from('pending_users').insert({
       email, full_name: name, phone, password: pass, status: 'pending'
     });
@@ -2371,7 +2391,7 @@ async function doRegister(){
       return;
     }
 
-    // Thông báo chờ duyệt
+    // Thông báo chờ duyệt - không cần OTP
     document.getElementById('form-register').style.display = 'none';
     document.getElementById('auth-tabs').style.display = 'none';
     clearAuthMsg();
@@ -2382,10 +2402,10 @@ async function doRegister(){
         <div style="font-size:15px;font-weight:700;color:var(--accent2);margin-bottom:8px">Đăng ký thành công!</div>
         <div style="font-size:13px;color:var(--text2);line-height:1.9">
           Thông tin của bạn đã được ghi nhận.<br>
-          Admin sẽ xem xét và duyệt tài khoản.<br><br>
-          Sau khi được duyệt, bạn sẽ nhận được<br>
-          <b style="color:var(--accent2)">mã OTP qua email ${email}</b><br>
-          để kích hoạt tài khoản.<br><br>
+          Vui lòng chờ admin xét duyệt.<br><br>
+          Sau khi được duyệt, bạn có thể<br>
+          <b style="color:var(--accent2)">đăng nhập bằng email và mật khẩu</b><br>
+          đã đăng ký.<br><br>
           <span style="color:var(--text3);font-size:12px">Liên hệ: tuan.npa2706@gmail.com</span>
         </div>
         <button class="auth-btn" style="margin-top:16px;background:var(--bg2);color:var(--text2)" 
@@ -3395,28 +3415,11 @@ function renderUserMgmt(){
 
 
 async function approveUser(email, name, password){
-  if(!confirm('Duyệt và gửi OTP cho ' + email + '?')) return;
+  if(!confirm('Duyệt tài khoản ' + email + '?')) return;
   toast('Đang xử lý...','loading');
-
   try{
-    // 1. Tạo tài khoản Supabase Auth
-    const { data, error } = await sb.auth.signUp({
-      email,
-      password: password || Math.random().toString(36).slice(-10),
-      options: { data: { full_name: name } }
-    });
-
-    if(error && !error.message.includes('already registered')){
-      toast('Lỗi tạo tài khoản: '+error.message,'error');
-      return;
-    }
-
-    // 2. Cập nhật status trong pending_users
-    await sb.from('pending_users').update({status:'approved'}).eq('email',email);
-
-    toast('✅ Đã duyệt! OTP đã gửi về '+email,'success');
-
-    // Reload danh sách
+    await sb.from('pending_users').update({status:'approved'}).eq('email', email);
+    toast('✅ Đã duyệt! '+name+' có thể đăng nhập ngay.','success');
     renderUserMgmt();
   }catch(e){
     toast('Lỗi: '+e.message,'error');
