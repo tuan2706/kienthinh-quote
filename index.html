@@ -1544,6 +1544,18 @@ window.addEventListener('DOMContentLoaded',()=>{
     document.getElementById('auth-screen').style.display='flex';
   }
   
+  // Lưu state khi chuyển tab hoặc đóng trình duyệt
+  document.addEventListener('visibilitychange', ()=>{
+    if(document.hidden){
+      if(cq) LS.set('bgpro:autosave:cq', cq);
+      saveCalc();
+    }
+  });
+  window.addEventListener('beforeunload', ()=>{
+    if(cq) LS.set('bgpro:autosave:cq', cq);
+    saveCalc();
+  });
+
   // Lắng nghe auth state changes
   sb.auth.onAuthStateChange((event, session) => {
     if(event === 'SIGNED_IN' && session?.user){
@@ -1627,8 +1639,24 @@ const bq=()=>({
 
 // ── NAV ──────────────────────────────────────────────────────
 function goPage(p){
-  if(p==='new'){cq=bq();}
-  if(p==='editor'&&!cq)cq=bq();
+  // Lưu state hiện tại trước khi chuyển trang
+  if(cq) LS.set('bgpro:autosave:cq', cq);
+  saveCalc();
+
+  if(p==='new'){
+    // Khôi phục autosave nếu chưa lưu, không tạo mới
+    const saved = LS.get('bgpro:autosave:cq');
+    if(saved && !quotes.find(q=>q.id===saved.id)){
+      cq = saved; // Tiếp tục soạn dở
+    } else {
+      cq = bq(); // Tạo mới
+      LS.del('bgpro:autosave:cq');
+    }
+  }
+  if(p==='editor'&&!cq){
+    const saved = LS.get('bgpro:autosave:cq');
+    cq = saved || bq();
+  }
   const ap=p==='new'?'editor':p;
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
   document.querySelectorAll('.bn-item').forEach(b=>b.classList.remove('active'));
@@ -2934,6 +2962,59 @@ function addCalcToQuote(){
   goPage('editor');
   toast('Đã tạo báo giá mới','success',newItems.length+' thiết bị, giá bán ra riêng từng item');
 }
+function saveCalcToCatalog(){
+  const r = calcEngine();
+  const validItems = calcState.items.filter(it=>it.name||it.code);
+  if(!validItems.length){
+    toast('Chưa có thiết bị nào','error');
+    return;
+  }
+
+  // Tính giá bán ra từng item
+  const totalBuy = validItems.reduce((s,it)=>s+itemVND(it),0);
+
+  let added = 0;
+  validItems.forEach(it=>{
+    // Tính đơn giá bán ra cho item này
+    let sellPrice;
+    if(it.sellPrice > 0){
+      sellPrice = Math.round(it.sellPrice / (it.qty||1));
+    } else if(r.sell > 0 && totalBuy > 0){
+      const ratio = itemVND(it) / totalBuy;
+      sellPrice = Math.round(r.sell * ratio / (it.qty||1));
+    } else {
+      sellPrice = 0;
+    }
+
+    // Kiểm tra đã có trong danh mục chưa
+    const existing = catalog.findIndex(p =>
+      (it.code && p.code === it.code) ||
+      (it.name && p.name === it.name)
+    );
+
+    const catItem = {
+      code: it.code||'',
+      name: it.name||'',
+      unit: it.unit||'Cái',
+      price: sellPrice,
+      brand: it.brand||'',
+      specs: it.specs||''
+    };
+
+    if(existing >= 0){
+      // Cập nhật giá nếu đã có
+      catalog[existing] = {...catalog[existing], price: sellPrice};
+    } else {
+      catalog.unshift(catItem);
+    }
+    added++;
+  });
+
+  ULS.set(KEYS.cat, catalog);
+  sbAutoSync();
+  toast('Đã lưu vào danh mục','success', added+' sản phẩm với giá bán ra mới');
+}
+
 function copyCalcResult(){
   const r=calcEngine();
   const txt=`BẢNG TÍNH GIÁ THIẾT BỊ
