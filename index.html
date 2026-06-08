@@ -3753,7 +3753,7 @@ body{font-family:'Plus Jakarta Sans',sans-serif;font-size:9pt;color:#0f1923;back
 .qtb thead th:first-child{border-radius:0;}
 .qtb tbody td{padding:7px 8px;border-bottom:1px solid #ede9e0;vertical-align:top;word-break:break-word;}
 .qtb tbody tr:nth-child(even) td{background:#faf8f4!important;}
-.r{text-align:right;}.c{text-align:center;}
+.r{text-align:right;white-space:nowrap;}.c{text-align:center;white-space:nowrap;}
 .qtots{display:flex;justify-content:flex-end;margin-bottom:14px;}
 .qti{width:240px;border:1px solid #e8e2d8;border-radius:8px;overflow:hidden;}
 .qtr{display:flex;justify-content:space-between;padding:5px 12px;font-size:8pt;border-bottom:1px solid #ede9e0;}
@@ -3797,7 +3797,7 @@ function buildHTML(q,co,forPrint){
     <td class="c" style="color:#888;vertical-align:top">${i+1}</td>
     <td style="vertical-align:top">${nameHtml}</td>
     <td class="brand" style="vertical-align:top">${esc(it.brand||'').replace(/[/]/g,'<wbr>/')}</td>
-    <td class="c" style="vertical-align:top">${esc(it.unit)}</td>
+    <td class="c" style="vertical-align:top;white-space:nowrap">${esc(it.unit)}</td>
     <td class="r" style="vertical-align:top">${fn(it.qty,cur)}</td>
     <td class="r" style="vertical-align:top">${fm(it.price,cur)}</td>
     <td class="r" style="font-weight:700;color:#c8922a;vertical-align:top">${fm(it.qty*it.price,cur)}</td>
@@ -3848,11 +3848,11 @@ function buildHTML(q,co,forPrint){
   <table class="qtb"><thead><tr>
     <th style="width:22px">#</th>
     <th>Tên hàng hóa / Vật tư</th>
-    <th class="brand-th" style="width:105px">Hãng / Xuất xứ</th>
-    <th style="width:38px;text-align:center">ĐVT</th>
-    <th style="width:34px;text-align:right">SL</th>
-    <th style="width:86px;text-align:right">Đơn giá</th>
-    <th style="width:94px;text-align:right">Thành tiền</th>
+    <th class="brand-th" style="width:100px">Hãng / Xuất xứ</th>
+    <th style="width:44px;text-align:center;white-space:nowrap">ĐVT</th>
+    <th style="width:30px;text-align:right;white-space:nowrap">SL</th>
+    <th style="width:88px;text-align:right;white-space:nowrap">Đơn giá</th>
+    <th style="width:94px;text-align:right;white-space:nowrap">Thành tiền</th>
   </tr></thead><tbody>${iRows}</tbody></table>
   <div class="qtots"><div class="qti">
     <div class="qtr"><span class="tl">Tạm tính</span><span>${fm(t.sub,cur)}</span></div>
