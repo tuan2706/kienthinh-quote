@@ -1218,6 +1218,7 @@ const LS = {
 };
 
 let currentUser = null;
+let currentPage = 'dashboard';
 
 function userKey(k) { return currentUser ? `bgpro:${currentUser}:${k}` : null; }
 
@@ -3169,11 +3170,12 @@ function buildItemRow(it,idx,cur){
     <td style="text-align:center;color:var(--muted);font-size:11px;width:28px">${idx+1}</td>
     <td style="position:relative">
       <div style="display:flex;gap:4px;align-items:center">
-        <input class="ii cat-search-inp" style="width:100%;min-width:160px" value="${esc(it.name)}" placeholder="Tên hoặc mã thiết bị..." 
-          oninput="si(${it.id},'name',this.value);showAC(${it.id},this)"
+        <textarea class="ii cat-search-inp" style="width:100%;min-width:160px;resize:vertical;min-height:34px;line-height:1.5;overflow:hidden" placeholder="Tên hoặc mã thiết bị..." 
+          oninput="si(${it.id},'name',this.value);showAC(${it.id},this);autoH(this)"
           onkeydown="acKey(event,${it.id})"
           onfocus="showAC(${it.id},this)"
-          autocomplete="off">
+          autocomplete="off"
+          rows="1">${esc(it.name)}</textarea>
         ${catalog.length?`<button class="btn btn-g" style="padding:3px 7px;font-size:11px;white-space:nowrap;flex-shrink:0" onclick="openCatPicker(${it.id})" title="Chọn từ danh mục">📂</button>`:''}
       </div>
       <div class="cat-dropdown" id="acd-${it.id}" style="display:none"></div>
