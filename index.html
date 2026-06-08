@@ -1561,7 +1561,6 @@ window.addEventListener('DOMContentLoaded',()=>{
     if(event === 'SIGNED_IN' && session?.user){
       const dn = session.user.user_metadata?.full_name || session.user.user_metadata?.name || session.user.email;
       LS.set('bgpro:displayName', dn);
-      // Lưu local users
       const users = getUsers();
       const email = session.user.email;
       if(!users[email]){
@@ -1571,9 +1570,12 @@ window.addEventListener('DOMContentLoaded',()=>{
         users[email].status = 'approved';
         saveUsers(users);
       }
-      // Đăng nhập luôn
-      loginUser(email, dn);
-      setTimeout(()=>sbInit(), 500);
+      // Chỉ gọi loginUser nếu chưa đăng nhập
+      if(!currentUser || currentUser === '__default__'){
+        loginUser(email, dn);
+        setTimeout(()=>sbInit(), 500);
+      }
+      // Nếu đã đăng nhập rồi thì không làm gì - tránh reset trang
     }
     if(event === 'PASSWORD_RECOVERY'){
       // Xử lý reset mật khẩu nếu cần
@@ -2337,8 +2339,7 @@ async function sbInit(){
 
   if(changed){
     updateSB();
-    const ce=document.getElementById('content');
-    if(ce) goPage('dashboard');
+    // Không redirect - update data âm thầm
     toast('Đã đồng bộ từ Supabase','success',(sbQs?.length||0)+' báo giá');
   }
   if(!sbQs?.length && quotes.length) sbSyncQuotes(_sbProfileId);
