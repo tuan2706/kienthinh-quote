@@ -2207,16 +2207,22 @@ async function sbEnsureProfile(user){
 
 // ── SYNC CATALOG ─────────────────────────────────────────────
 async function sbSyncCatalog(uid){
-  if(!uid||!catalog.length) return;
-  await sb.from('catalog').delete().eq('user_id', uid);
+  if(!catalog.length) return;
+  // Luôn lưu catalog vào admin UUID để tất cả member đều thấy
+  const adminUID = await getAdminUID();
+  const targetUID = adminUID || uid;
+  if(!targetUID) return;
+
+  await sb.from('catalog').delete().eq('user_id', targetUID);
   const rows = catalog.map((p,i)=>({
-    user_id:uid, code:p.code||'', name:p.name||'',
+    user_id:targetUID, code:p.code||'', name:p.name||'',
     unit:p.unit||'', price:p.price||0, brand:p.brand||'',
     specs:p.specs||'', sort_order:i
   }));
   for(let i=0;i<rows.length;i+=100){
     await sb.from('catalog').insert(rows.slice(i,i+100));
   }
+  console.log('✅ Synced catalog to shared storage:', rows.length, 'items');
 }
 
 async function sbLoadCatalog(uid){
@@ -2391,12 +2397,8 @@ async function sbInit(){
 
 // Load shared data cho member (không có Supabase Auth session)
 async function sbInitForMember(){
-  // Lấy admin UID từ profiles table
   const adminUID = await getAdminUID();
-  if(!adminUID){
-    console.log('sbInitForMember: admin UID not found');
-    return;
-  }
+  if(!adminUID){ console.log('sbInitForMember: no admin UID'); return; }
 
   // Load catalog + company từ admin
   const [sbCat, sbCo] = await Promise.all([
@@ -2406,11 +2408,20 @@ async function sbInitForMember(){
 
   let changed = false;
   if(sbCat?.length > 0){
-    catalog = sbCat;
-    ULS.set('cat', catalog);
-    changed = true;
-    console.log('✅ Loaded', sbCat.length, 'catalog items from admin');
+    // Merge: dùng cloud nếu có nhiều hơn hoặc bằng local
+    if(sbCat.length >= catalog.length){
+      catalog = sbCat;
+      ULS.set('cat', catalog);
+      changed = true;
+    } else {
+      // Local có nhiều hơn → push lên cloud
+      await sbSyncCatalog(null);
+    }
+  } else if(catalog.length > 0){
+    // Cloud trống, local có data → push lên
+    await sbSyncCatalog(null);
   }
+
   if(sbCo){
     company = {...company, ...sbCo};
     ULS.set('co', company);
@@ -2419,19 +2430,21 @@ async function sbInitForMember(){
 
   if(changed){
     updateSB();
-    toast('Đã đồng bộ danh mục từ admin', 'success', sbCat?.length + ' sản phẩm');
+    if(currentPage==='catalog') goPage('catalog');
+    toast('Đã đồng bộ từ Supabase', 'success', (sbCat?.length||0)+' sản phẩm');
   }
 }
 
 function sbAutoSync(){
-  if(!_sbProfileId) return;
   clearTimeout(_sbSyncTimer);
   _sbSyncTimer = setTimeout(async()=>{
-    // Quotes: sync theo user riêng
-    await sbSyncQuotes(_sbProfileId);
-    // Catalog + Company: chỉ admin mới được sync lên
-    if(isAdmin()){
-      await sbSyncCatalog(_sbProfileId);
+    // Catalog: tất cả đều sync vào chung 1 chỗ (admin UUID)
+    await sbSyncCatalog(null);
+    // Quotes: sync theo user riêng (nếu có session)
+    if(_sbProfileId) await sbSyncQuotes(_sbProfileId);
+    // Company: chỉ admin
+    const user = await sbGetUser();
+    if(user?.email === ADMIN_EMAIL && _sbProfileId){
       await sbSyncCompany(_sbProfileId);
     }
   }, 3000);
