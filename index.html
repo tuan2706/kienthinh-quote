@@ -2180,40 +2180,9 @@ async function sbQ(table, query=''){
 }
 
 // Lấy user_id của admin để load shared data (catalog, company)
-let _adminUID = null;
+let _adminUID = '9246b1a5-8351-44b3-98e5-bb08e5d9f190'; // Hardcoded admin UUID
 async function getAdminUID(){
-  if(_adminUID) return _adminUID;
-  
-  const user = await sbGetUser();
-  
-  // Nếu chính mình là admin
-  if(user?.email === ADMIN_EMAIL){
-    _adminUID = user.id;
-    // Lưu adminUID lên Supabase để members đọc được
-    await sb.from('profiles').upsert({
-      id: user.id, email: user.email,
-      full_name: user.user_metadata?.full_name||'',
-      display_name: user.user_metadata?.name||''
-    }, {onConflict:'id'});
-    LS.set('bgpro:admin_uid', user.id);
-    return _adminUID;
-  }
-  
-  // Member: tìm admin profile qua email
-  const { data } = await sb.from('profiles')
-    .select('id,email').eq('email', ADMIN_EMAIL).maybeSingle();
-  
-  if(data?.id){
-    _adminUID = data.id;
-    LS.set('bgpro:admin_uid', data.id);
-    return _adminUID;
-  }
-  
-  // Fallback: dùng cached uid
-  const cached = LS.get('bgpro:admin_uid');
-  if(cached){ _adminUID = cached; return _adminUID; }
-  
-  return null;
+  return _adminUID;
 }
 
 function isAdmin(){
