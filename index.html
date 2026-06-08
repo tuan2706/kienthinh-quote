@@ -1768,6 +1768,11 @@ function delQ(id){
 
 // ── EDITOR ───────────────────────────────────────────────────
 function renderEditor(el){
+  // Khôi phục autosave nếu có và chưa có cq
+  const autosave = LS.get('bgpro:autosave:cq');
+  if(autosave && (!cq || !cq.num)){
+    cq = autosave;
+  }
   const q=cq;const cur=q.currency||'VND';
   const t=ct(q.items,q.discPct,q.vatPct);
   const pvOpts=PROVINCES.map(p=>`<option${p===q.deliveryLocation?' selected':''}>${esc(p)}</option>`).join('');
@@ -1806,12 +1811,12 @@ function renderEditor(el){
     </div>
     <div class="card">
       <div class="card-title">👤 Khách hàng</div>
-      <div class="ff"><label class="lbl">Tên công ty / Khách hàng</label><input class="inp" value="${esc(q.clientName)}" placeholder="Tên công ty..." oninput="cq.clientName=this.value"></div>
+      <div class="ff"><label class="lbl">Tên công ty / Khách hàng</label><input class="inp" value="${esc(q.clientName)}" placeholder="Tên công ty..." oninput="sqf('clientName',this.value)"></div>
       <div class="fr">
-        <div class="fg"><label class="lbl">Người liên hệ</label><input class="inp" value="${esc(q.clientContact)}" oninput="cq.clientContact=this.value"></div>
-        <div class="fg"><label class="lbl">Điện thoại</label><input class="inp" value="${esc(q.clientPhone)}" oninput="cq.clientPhone=this.value"></div>
+        <div class="fg"><label class="lbl">Người liên hệ</label><input class="inp" value="${esc(q.clientContact)}" oninput="sqf('clientContact',this.value)"></div>
+        <div class="fg"><label class="lbl">Điện thoại</label><input class="inp" value="${esc(q.clientPhone)}" oninput="sqf('clientPhone',this.value)"></div>
       </div>
-      <div class="ff"><label class="lbl">Địa chỉ</label><input class="inp" value="${esc(q.clientAddr)}" oninput="cq.clientAddr=this.value"></div>
+      <div class="ff"><label class="lbl">Địa chỉ</label><input class="inp" value="${esc(q.clientAddr)}" oninput="sqf('clientAddr',this.value)"></div>
     </div>
   </div>
 
@@ -1881,7 +1886,7 @@ function renderEditor(el){
   <div class="g2">
     <div class="card">
       <div class="card-title">📝 Ghi chú thêm</div>
-      <textarea class="ta" rows="4" placeholder="Ghi chú thêm nếu có..." oninput="cq.notes=this.value">${esc(q.notes)}</textarea>
+      <textarea class="ta" rows="4" placeholder="Ghi chú thêm nếu có..." oninput="sqf('notes',this.value)">${esc(q.notes)}</textarea>
     </div>
     <div class="card">
       <div class="card-title">🏦 Ngân hàng & Chữ ký</div>
@@ -1975,10 +1980,14 @@ function refreshTot(){
   const tb=document.getElementById('totbox');if(tb)tb.innerHTML=buildTH(t,cq);
 }
 function si(id,f,v){
-  const it=cq.items.find(i=>i.id===id);if(!it)return;it[f]=v;
+  const it=cq.items.find(i=>i.id===id);if(!it)return;
+  if(f==='price'||f==='qty') v=typeof v==='string'?parseMoney(v):+v||0;
+  it[f]=v;
   const el=document.getElementById('it-'+id);
   if(el)el.textContent=fm(it.qty*it.price,cq.currency||'VND');
   const tb=document.getElementById('totbox');if(tb)tb.innerHTML=buildTH(ct(cq.items,cq.discPct,cq.vatPct),cq);
+  // Lưu cq ngay lập tức vào localStorage
+  LS.set('bgpro:autosave:cq', cq);
 }
 function ai(){
   const it={id:Date.now(),name:'',code:'',brand:'',unit:'',qty:1,price:0,sellPrice:0};
