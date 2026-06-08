@@ -4039,39 +4039,95 @@ function exportReportXLSX(){
   const period=document.getElementById('rpt-period')?.value||'month';
   const year=document.getElementById('rpt-year')?.value||'';
 
-  // Sheet 1: Tổng hợp
-  const sumRows=[['Kỳ','Số báo giá','Đã gửi','Chấp nhận','Từ chối','Doanh thu (VND)','Tỉ lệ chốt (%)']];
+  // ── Sheet 1: Tổng hợp theo kỳ ──
+  const sumRows=[
+    ['BÁO CÁO KIÊN THỊNH QUOTE'],
+    ['Kỳ báo cáo:', year||'Tất cả', 'Loại:', period==='month'?'Theo tháng':period==='quarter'?'Theo quý':'Theo năm'],
+    [],
+    ['Kỳ','Tổng BG','Nháp','Đã gửi','Chấp nhận','Từ chối','Tổng giá trị (VND)','Tỉ lệ chốt (%)']
+  ];
   data.forEach(d=>{
     const rate=d.count?Math.round((d.accepted||0)/d.count*100):0;
-    sumRows.push([d.key,d.count,d.sent||0,d.accepted||0,d.rejected||0,Math.round(d.total),rate]);
+    sumRows.push([d.key,d.count,d.draft||0,d.sent||0,d.accepted||0,d.rejected||0,Math.round(d.total),rate]);
   });
-  // Totals row
+  sumRows.push([]);
   sumRows.push(['TỔNG CỘNG',
-    data.reduce((s,d)=>s+d.count,0),'',
+    data.reduce((s,d)=>s+d.count,0),
+    data.reduce((s,d)=>s+(d.draft||0),0),
+    data.reduce((s,d)=>s+(d.sent||0),0),
     data.reduce((s,d)=>s+(d.accepted||0),0),
     data.reduce((s,d)=>s+(d.rejected||0),0),
     Math.round(data.reduce((s,d)=>s+d.total,0)),''
   ]);
 
-  // Sheet 2: Chi tiết từng báo giá
-  const detailRows=[['Số BG','Khách hàng','Ngày lập','Kỳ','Trạng thái','Tổng tiền (VND)']];
-  data.forEach(d=>{
-    d.items.forEach(q=>{
-      const t=ct(q.items,q.discPct,q.vatPct);
-      const m=q.date?q.date.slice(0,7):'';
-      const qtr=q.date?q.date.slice(0,4)+' Q'+Math.ceil(parseInt(q.date.slice(5,7))/3):'';
-      detailRows.push([q.num||'',q.clientName||'',q.date||'',
-        period==='month'?m:period==='quarter'?qtr:(q.date||'').slice(0,4),
-        SL[q.status]||q.status,Math.round(t.grand)]);
+  // ── Sheet 2: Chi tiết từng báo giá ──
+  const detailRows=[
+    ['CHI TIẾT TỪNG BÁO GIÁ'],
+    [],
+    ['Số BG','Ngày lập','Khách hàng','Địa chỉ','SĐT','Trạng thái',
+     'Tiền hàng (VND)','Chiết khấu (%)','Thuế VAT (%)','Tổng cộng (VND)','Ghi chú']
+  ];
+  const allQuotes = data.flatMap(d=>d.items);
+  allQuotes.forEach(q=>{
+    const t=ct(q.items,q.discPct,q.vatPct);
+    detailRows.push([
+      q.num||'', q.date||'', q.clientName||'', q.clientAddr||'', q.clientPhone||'',
+      SL[q.status]||q.status,
+      Math.round(t.sub), q.discPct||0, q.vatPct||0, Math.round(t.grand),
+      q.notes||''
+    ]);
+  });
+  detailRows.push([]);
+  detailRows.push(['','','','','','TỔNG',
+    Math.round(allQuotes.reduce((s,q)=>s+ct(q.items,q.discPct,q.vatPct).sub,0)),'','',
+    Math.round(allQuotes.reduce((s,q)=>s+ct(q.items,q.discPct,q.vatPct).grand,0)),''
+  ]);
+
+  // ── Sheet 3: Chi tiết hàng hóa từng báo giá ──
+  const itemRows=[
+    ['CHI TIẾT HÀNG HÓA / VẬT TƯ'],
+    [],
+    ['Số BG','Ngày lập','Khách hàng','Trạng thái',
+     '#','Tên hàng hóa / Vật tư','Mã SP','Hãng','ĐVT','Số lượng','Đơn giá (VND)','Thành tiền (VND)']
+  ];
+  allQuotes.forEach(q=>{
+    const t=ct(q.items,q.discPct,q.vatPct);
+    (q.items||[]).forEach((it,i)=>{
+      itemRows.push([
+        i===0?(q.num||''):'',
+        i===0?(q.date||''):'',
+        i===0?(q.clientName||''):'',
+        i===0?(SL[q.status]||q.status):'',
+        i+1,
+        it.name||'', it.code||'', it.brand||'', it.unit||'',
+        it.qty||1, Math.round(it.price||0), Math.round((it.qty||1)*(it.price||0))
+      ]);
     });
+    // Dòng tổng cộng của báo giá
+    itemRows.push(['','','','','','','','','','',
+      '→ Tổng cộng:', Math.round(t.grand)
+    ]);
+    itemRows.push([]);
   });
 
+  // Tạo workbook
   const wb=XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(sumRows),'Tổng hợp');
-  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(detailRows),'Chi tiết');
-  const fname=`BaoCao_${year||'TatCa'}_${period}.xlsx`;
+
+  const ws1=XLSX.utils.aoa_to_sheet(sumRows);
+  ws1['!cols']=[{wch:15},{wch:10},{wch:8},{wch:8},{wch:10},{wch:10},{wch:20},{wch:12}];
+  XLSX.utils.book_append_sheet(wb,ws1,'Tổng hợp');
+
+  const ws2=XLSX.utils.aoa_to_sheet(detailRows);
+  ws2['!cols']=[{wch:14},{wch:12},{wch:25},{wch:25},{wch:14},{wch:12},{wch:18},{wch:8},{wch:8},{wch:18},{wch:20}];
+  XLSX.utils.book_append_sheet(wb,ws2,'Chi tiết BG');
+
+  const ws3=XLSX.utils.aoa_to_sheet(itemRows);
+  ws3['!cols']=[{wch:14},{wch:12},{wch:20},{wch:12},{wch:4},{wch:35},{wch:14},{wch:18},{wch:8},{wch:8},{wch:16},{wch:16}];
+  XLSX.utils.book_append_sheet(wb,ws3,'Hàng hóa');
+
+  const fname=`BaoCao_KienThinh_${year||'TatCa'}_${period}.xlsx`;
   XLSX.writeFile(wb,fname);
-  toast('Xuất file thành công','success',fname);
+  toast('Xuất Excel thành công','success','3 sheet: Tổng hợp + Chi tiết BG + Hàng hóa');
 }
 
 function exportReportPDF(){
