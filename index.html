@@ -2183,22 +2183,42 @@ async function sbQ(table, query=''){
 let _adminUID = null;
 async function getAdminUID(){
   if(_adminUID) return _adminUID;
-  // Kiểm tra nếu chính mình là admin
+  
   const user = await sbGetUser();
+  
+  // Nếu chính mình là admin
   if(user?.email === ADMIN_EMAIL){
     _adminUID = user.id;
+    // Lưu adminUID lên Supabase để members đọc được
+    await sb.from('profiles').upsert({
+      id: user.id, email: user.email,
+      full_name: user.user_metadata?.full_name||'',
+      display_name: user.user_metadata?.name||''
+    }, {onConflict:'id'});
+    LS.set('bgpro:admin_uid', user.id);
     return _adminUID;
   }
-  // Lấy admin profile từ Supabase
+  
+  // Member: tìm admin profile qua email
   const { data } = await sb.from('profiles')
-    .select('id').eq('email', ADMIN_EMAIL).maybeSingle();
-  _adminUID = data?.id || null;
-  return _adminUID;
+    .select('id,email').eq('email', ADMIN_EMAIL).maybeSingle();
+  
+  if(data?.id){
+    _adminUID = data.id;
+    LS.set('bgpro:admin_uid', data.id);
+    return _adminUID;
+  }
+  
+  // Fallback: dùng cached uid
+  const cached = LS.get('bgpro:admin_uid');
+  if(cached){ _adminUID = cached; return _adminUID; }
+  
+  return null;
 }
 
 function isAdmin(){
-  const user_email = LS.get('bgpro:displayName') || '';
-  return user_email === ADMIN_EMAIL || currentUser === ADMIN_EMAIL;
+  const user = window._currentSbUser;
+  return user?.email === ADMIN_EMAIL;
 }
 
 // Lấy hoặc tạo profile
@@ -2353,7 +2373,14 @@ let _sbSyncTimer = null;
 
 async function sbInit(){
   const user = await sbGetUser();
-  if(!user){ console.log('Supabase: no session'); return; }
+  
+  // Member không có Supabase Auth session → dùng flow riêng
+  if(!user){
+    await sbInitForMember();
+    return;
+  }
+  
+  window._currentSbUser = user;
   _sbProfileId = await sbEnsureProfile(user);
   LS.set('bgpro:displayName', user.user_metadata?.name || user.email);
 
@@ -2363,9 +2390,9 @@ async function sbInit(){
 
   // Load: quotes từ user riêng, catalog+company từ admin (shared)
   const [sbQs, sbCat, sbCo] = await Promise.all([
-    sbLoadQuotes(_sbProfileId),           // Quotes: theo user
-    sbLoadCatalog(sharedUID),             // Catalog: từ admin (shared)
-    sbLoadCompany(sharedUID)              // Company info: từ admin (shared)
+    sbLoadQuotes(_sbProfileId),
+    sbLoadCatalog(sharedUID),
+    sbLoadCompany(sharedUID)
   ]);
 
   let changed = false;
@@ -2387,6 +2414,40 @@ async function sbInit(){
   const av = dn.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
   const topAv=document.getElementById('topbar-avatar'); if(topAv)topAv.textContent=av;
   const topNm=document.getElementById('topbar-user-name'); if(topNm)topNm.textContent=dn;
+}
+
+// Load shared data cho member (không có Supabase Auth session)
+async function sbInitForMember(){
+  // Lấy admin UID từ profiles table
+  const adminUID = await getAdminUID();
+  if(!adminUID){
+    console.log('sbInitForMember: admin UID not found');
+    return;
+  }
+
+  // Load catalog + company từ admin
+  const [sbCat, sbCo] = await Promise.all([
+    sbLoadCatalog(adminUID),
+    sbLoadCompany(adminUID)
+  ]);
+
+  let changed = false;
+  if(sbCat?.length > 0){
+    catalog = sbCat;
+    ULS.set('cat', catalog);
+    changed = true;
+    console.log('✅ Loaded', sbCat.length, 'catalog items from admin');
+  }
+  if(sbCo){
+    company = {...company, ...sbCo};
+    ULS.set('co', company);
+    changed = true;
+  }
+
+  if(changed){
+    updateSB();
+    toast('Đã đồng bộ danh mục từ admin', 'success', sbCat?.length + ' sản phẩm');
+  }
 }
 
 function sbAutoSync(){
