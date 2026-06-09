@@ -1655,6 +1655,13 @@ const bq=()=>({
 });
 
 // ── NAV ──────────────────────────────────────────────────────
+// Cập nhật field của quote header và auto-save
+function sqf(field, val){
+  if(!cq) return;
+  cq[field] = val;
+  LS.set('bgpro:autosave:cq', cq);
+}
+
 function goPage(p){
   // Lưu state hiện tại trước khi chuyển trang
   if(cq) LS.set('bgpro:autosave:cq', cq);
