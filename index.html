@@ -4537,7 +4537,23 @@ function renderSettings(el){
 
     <!-- Quản lý tài khoản -->
     <div class="card" style="margin-top:14px">
-      <div class="card-title"><span class="ct-dot"></span>Quản lý tài khoản đăng ký <button class="btn btn-g" style="font-size:10px;padding:2px 8px;margin-left:8px" onclick="renderUserMgmt()">🔄 Tải lại</button></div>
+      <div class="card-title"><span class="ct-dot"></span>Quản lý tài khoản đăng ký 
+        <button class="btn btn-g" style="font-size:10px;padding:2px 8px;margin-left:8px" onclick="renderUserMgmt()">🔄 Tải lại</button>
+        <button class="btn btn-s" style="font-size:10px;padding:2px 8px;margin-left:6px" onclick="showAddUserForm()">➕ Thêm tài khoản</button>
+      </div>
+      <div id="add-user-form" style="display:none;background:var(--bg2);border-radius:10px;padding:14px;margin-bottom:14px">
+        <div style="font-size:12px;font-weight:700;color:var(--accent2);margin-bottom:10px">➕ Thêm tài khoản mới</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+          <div><label class="lbl">Họ tên</label><input class="inp" id="add-fullname" placeholder="Nguyễn Thị Xon"></div>
+          <div><label class="lbl">Email</label><input class="inp" id="add-email" placeholder="xon.nguyen@kienthinh-eco.com"></div>
+          <div><label class="lbl">Mật khẩu</label><input class="inp" type="password" id="add-password" placeholder="Mật khẩu đăng nhập"></div>
+          <div><label class="lbl">Số điện thoại</label><input class="inp" id="add-phone" placeholder="0938585329"></div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-p" style="font-size:12px" onclick="doAddUser()">✅ Thêm & Duyệt ngay</button>
+          <button class="btn btn-g" style="font-size:12px" onclick="document.getElementById('add-user-form').style.display='none'">Huỷ</button>
+        </div>
+      </div>
       <div id="user-mgmt"><div style="color:var(--text3);font-size:12px;padding:10px">Đang tải...</div></div>
     </div>
   </div>`;
@@ -4592,6 +4608,54 @@ function renderUserMgmt(){
   return '';
 }
 
+
+function showAddUserForm(){
+  const f = document.getElementById('add-user-form');
+  if(f) f.style.display = f.style.display==='none' ? 'block' : 'none';
+  document.getElementById('add-email')?.focus();
+}
+
+async function doAddUser(){
+  const fullname = document.getElementById('add-fullname')?.value?.trim();
+  const email    = document.getElementById('add-email')?.value?.trim().toLowerCase();
+  const password = document.getElementById('add-password')?.value?.trim();
+  const phone    = document.getElementById('add-phone')?.value?.trim();
+
+  if(!fullname||!email||!password){
+    toast('Vui lòng điền đủ họ tên, email và mật khẩu','error'); return;
+  }
+  if(!validateEmail(email)){
+    toast('Email không hợp lệ','error'); return;
+  }
+
+  toast('Đang thêm...','loading');
+
+  // Kiểm tra email đã tồn tại chưa
+  const { data: existing } = await sb.from('pending_users')
+    .select('email').eq('email', email).maybeSingle();
+  if(existing){
+    toast('Email này đã tồn tại trong hệ thống','error'); return;
+  }
+
+  // Thêm vào pending_users với status approved ngay
+  const { error } = await sb.from('pending_users').insert({
+    email, full_name: fullname, phone: phone||'',
+    password: password, status: 'approved'
+  });
+
+  if(error){
+    toast('Lỗi: '+error.message,'error'); return;
+  }
+
+  toast('✅ Đã thêm tài khoản '+fullname,'success', email);
+  // Reset form
+  ['add-fullname','add-email','add-password','add-phone'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.value = '';
+  });
+  document.getElementById('add-user-form').style.display = 'none';
+  renderUserMgmt();
+}
 
 async function approveUser(email, name, password){
   if(!confirm('Duyệt tài khoản ' + email + '?')) return;
