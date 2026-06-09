@@ -2380,16 +2380,18 @@ async function sbInit(){
   const sharedUID = adminUID || _sbProfileId;
 
   // Load: quotes từ user riêng, catalog+company từ admin (shared)
-  const [sbQs, sbCat, sbCo] = await Promise.all([
+  const [sbQs, sbCat, sbCo, sbPqs] = await Promise.all([
     sbLoadQuotes(_sbProfileId),
     sbLoadCatalog(sharedUID),
-    sbLoadCompany(sharedUID)
+    sbLoadCompany(sharedUID),
+    sbLoadProjects(_sbProfileId)
   ]);
 
   let changed = false;
   if(sbQs?.length >= quotes.length){ quotes=sbQs; ULS.set('qs',quotes); changed=true; }
   if(sbCat?.length >= catalog.length){ catalog=sbCat; ULS.set('cat',catalog); changed=true; }
   if(sbCo){ company={...company,...sbCo}; ULS.set('co',company); changed=true; }
+  if(sbPqs?.length >= projects.length){ projects=sbPqs; ULS.set('pqs',projects); changed=true; }
 
   if(changed){
     updateSB();
@@ -2413,9 +2415,10 @@ async function sbInitForMember(){
   if(!adminUID){ console.log('sbInitForMember: no admin UID'); return; }
 
   // Load catalog + company từ admin
-  const [sbCat, sbCo] = await Promise.all([
+  const [sbCat, sbCo, sbPqs] = await Promise.all([
     sbLoadCatalog(adminUID),
-    sbLoadCompany(adminUID)
+    sbLoadCompany(adminUID),
+    sbLoadProjects(adminUID)
   ]);
 
   let changed = false;
@@ -2439,10 +2442,16 @@ async function sbInitForMember(){
     ULS.set('co', company);
     changed = true;
   }
+  if(sbPqs?.length >= projects.length){
+    projects = sbPqs;
+    ULS.set('pqs', projects);
+    changed = true;
+  }
 
   if(changed){
     updateSB();
     if(currentPage==='catalog') goPage('catalog');
+    if(currentPage==='project') goPage('project');
     toast('Đã đồng bộ từ Supabase', 'success', (sbCat?.length||0)+' sản phẩm');
   }
 }
@@ -2785,10 +2794,11 @@ function editProjectQuote(id){
   renderProjectEditor(document.getElementById('content'));
 }
 
-function deleteProject(id){
+async function deleteProject(id){
   if(!confirm('Xóa báo giá dự án này?')) return;
   projects = projects.filter(p=>p.id!==id);
   saveProjects();
+  sbDeleteProject(id).catch(()=>{});
   renderProjectPage(document.getElementById('content'));
 }
 
@@ -3472,6 +3482,51 @@ function renderPQModalList(gi, ii, q){
       document.getElementById('pq-cat-modal')?.remove();
     });
   });
+}
+
+// ── PROJECT QUOTES SYNC ──────────────────────────────────────
+async function sbSyncProjects(){
+  if(!projects.length) return;
+  const uid = _sbProfileId || '9246b1a5-8351-44b3-98e5-bb08e5d9f190';
+  for(const pq of projects){
+    const row = {
+      id: pq.id,
+      user_id: uid,
+      num: pq.num||'', date: pq.date||null, expiry: pq.expiry||null,
+      client_name: pq.clientName||'', client_contact: pq.clientContact||'',
+      client_phone: pq.clientPhone||'', client_addr: pq.clientAddr||'',
+      project_name: pq.projectName||'',
+      vat_pct: pq.vatPct||8, status: pq.status||'draft',
+      groups: pq.groups||[], conditions: pq.conditions||{},
+      created_at: pq.createdAt||new Date().toISOString()
+    };
+    await sb.from('project_quotes').upsert(row, {onConflict:'id'});
+  }
+  console.log('Synced', projects.length, 'project quotes');
+}
+
+async function sbLoadProjects(uid){
+  if(!uid) return null;
+  const adminUID = '9246b1a5-8351-44b3-98e5-bb08e5d9f190';
+  const uids = [...new Set([uid, adminUID].filter(Boolean))];
+  const { data } = await sb.from('project_quotes')
+    .select('*')
+    .in('user_id', uids)
+    .order('created_at', {ascending:false});
+  if(!data?.length) return null;
+  return data.map(r=>({
+    id: r.id, num: r.num, date: r.date, expiry: r.expiry,
+    clientName: r.client_name, clientContact: r.client_contact,
+    clientPhone: r.client_phone, clientAddr: r.client_addr,
+    projectName: r.project_name,
+    vatPct: +r.vat_pct, status: r.status,
+    groups: r.groups||[], conditions: r.conditions||{},
+    createdAt: r.created_at
+  }));
+}
+
+async function sbDeleteProject(id){
+  await sb.from('project_quotes').delete().eq('id', id);
 }
 
 function getRate(c){ return {VND:1,USD:calcState.usdRate,EUR:calcState.eurRate,CHF:calcState.chfRate}[c]||calcState.usdRate; }
