@@ -2414,37 +2414,42 @@ async function sbInitForMember(){
   const adminUID = await getAdminUID();
   if(!adminUID){ console.log('sbInitForMember: no admin UID'); return; }
 
-  // Load catalog + company từ admin
-  const [sbCat, sbCo, sbPqs] = await Promise.all([
+  // Load catalog + company + projects từ admin
+  // Load quotes: dùng REST API trực tiếp vì không có Supabase Auth session
+  const [sbCat, sbCo, sbPqs, sbQs] = await Promise.all([
     sbLoadCatalog(adminUID),
     sbLoadCompany(adminUID),
-    sbLoadProjects(adminUID)
+    sbLoadProjects(adminUID),
+    sbLoadQuotesAnon(adminUID) // Load quotes của admin (shared)
   ]);
 
   let changed = false;
-  if(sbCat?.length > 0){
-    // Merge: dùng cloud nếu có nhiều hơn hoặc bằng local
-    if(sbCat.length >= catalog.length){
-      catalog = sbCat;
-      ULS.set('cat', catalog);
-      changed = true;
-    } else {
-      // Local có nhiều hơn → push lên cloud
-      await sbSyncCatalog(null);
-    }
-  } else if(catalog.length > 0){
-    // Cloud trống, local có data → push lên
-    await sbSyncCatalog(null);
+
+  // Catalog
+  if(sbCat?.length > 0 && sbCat.length >= catalog.length){
+    catalog = sbCat;
+    ULS.set('cat', catalog);
+    changed = true;
   }
 
+  // Company
   if(sbCo){
     company = {...company, ...sbCo};
     ULS.set('co', company);
     changed = true;
   }
-  if(sbPqs?.length >= projects.length){
+
+  // Project quotes
+  if(sbPqs?.length > 0 && sbPqs.length >= projects.length){
     projects = sbPqs;
     ULS.set('pqs', projects);
+    changed = true;
+  }
+
+  // Quotes của admin - member có thể xem
+  if(sbQs?.length > 0 && sbQs.length >= quotes.length){
+    quotes = sbQs;
+    ULS.set('qs', quotes);
     changed = true;
   }
 
@@ -2452,7 +2457,48 @@ async function sbInitForMember(){
     updateSB();
     if(currentPage==='catalog') goPage('catalog');
     if(currentPage==='project') goPage('project');
-    toast('Đã đồng bộ từ Supabase', 'success', (sbCat?.length||0)+' sản phẩm');
+    if(currentPage==='dashboard') goPage('dashboard');
+    toast('Đã đồng bộ dữ liệu', 'success',
+      (sbCat?.length||0)+' SP · '+(sbQs?.length||0)+' BG · '+(sbPqs?.length||0)+' BGDA');
+  }
+}
+
+// Load quotes không cần Auth session (dùng REST API với anon key)
+async function sbLoadQuotesAnon(adminUID){
+  if(!adminUID) return null;
+  try {
+    const { data:qs } = await sb.from('quotes')
+      .select('*')
+      .eq('user_id', adminUID)
+      .order('created_at', {ascending:false});
+    if(!qs?.length) return null;
+    const result = [];
+    for(const q of qs){
+      let items = [];
+      try {
+        const { data:its } = await sb.from('quote_items')
+          .select('*').eq('quote_id', q.id).order('sort_order');
+        items = its||[];
+      } catch(e){}
+      result.push({
+        id:q.id, num:q.num||'', date:q.date||'', expiry:q.expiry||'',
+        status:q.status||'draft', currency:q.currency||'VND',
+        clientName:q.client_name||'', clientContact:q.client_contact||'',
+        clientPhone:q.client_phone||'', clientAddr:q.client_addr||'',
+        clientEmail:q.client_email||'',
+        vatPct:+(q.vat_pct||10), discPct:+(q.disc_pct||0),
+        notes:q.notes||'',
+        items: items.map(it=>({
+          id:Date.now()+Math.random(), name:it.name||'', code:it.code||'',
+          brand:it.brand||'', unit:it.unit||'', qty:+(it.qty||1),
+          price:+(it.price||0), specs:it.specs||''
+        }))
+      });
+    }
+    return result;
+  } catch(e){
+    console.warn('sbLoadQuotesAnon error:', e);
+    return null;
   }
 }
 
@@ -3487,7 +3533,8 @@ function renderPQModalList(gi, ii, q){
 // ── PROJECT QUOTES SYNC ──────────────────────────────────────
 async function sbSyncProjects(){
   if(!projects.length) return;
-  const uid = _sbProfileId || '9246b1a5-8351-44b3-98e5-bb08e5d9f190';
+  // Luôn dùng admin UUID để tất cả member đều thấy
+  const uid = '9246b1a5-8351-44b3-98e5-bb08e5d9f190';
   for(const pq of projects){
     const row = {
       id: pq.id,
@@ -3527,6 +3574,34 @@ async function sbLoadProjects(uid){
 
 async function sbDeleteProject(id){
   await sb.from('project_quotes').delete().eq('id', id);
+}
+
+// Sync một quote của member lên admin UUID (để admin và member khác thấy)
+async function sbSyncQuotesToAdmin(q, adminUID){
+  if(!q || !adminUID) return;
+  try {
+    // Upsert quote
+    await sb.from('quotes').upsert({
+      id: q.id, user_id: adminUID,
+      num:q.num||'', date:q.date||'', expiry:q.expiry||'',
+      status:q.status||'draft', currency:q.currency||'VND',
+      client_name:q.clientName||'', client_contact:q.clientContact||'',
+      client_phone:q.clientPhone||'', client_addr:q.clientAddr||'',
+      client_email:q.clientEmail||'',
+      vat_pct:q.vatPct||10, disc_pct:q.discPct||0,
+      notes:q.notes||''
+    }, {onConflict:'id'});
+    // Upsert items
+    if(q.items?.length){
+      await sb.from('quote_items').delete().eq('quote_id', q.id);
+      const rows = q.items.map((it,i)=>({
+        quote_id:q.id, name:it.name||'', code:it.code||'',
+        brand:it.brand||'', unit:it.unit||'', qty:it.qty||1,
+        price:it.price||0, specs:it.specs||'', sort_order:i
+      }));
+      await sb.from('quote_items').insert(rows);
+    }
+  } catch(e){ console.warn('sbSyncQuotesToAdmin:', e); }
 }
 
 function getRate(c){ return {VND:1,USD:calcState.usdRate,EUR:calcState.eurRate,CHF:calcState.chfRate}[c]||calcState.usdRate; }
@@ -4863,8 +4938,11 @@ function buildHTML(q,co,forPrint){
   const t=ct(q.items,q.discPct,q.vatPct);
   const logo=co.logoDataUrl?`<img src="${co.logoDataUrl}" class="qlogo" alt="Logo">`:'';
   const dText=getDT(q);const pText=getPT(q);
-  // Ensure clientName fallback
-  if(!q.clientName) q.clientName = '—';
+  // Ensure clientName fallback - lấy từ nhiều field khác nhau
+  if(!q.clientName) q.clientName = q.client_name || q.clientname || '—';
+  if(!q.clientContact) q.clientContact = q.client_contact || '';
+  if(!q.clientPhone) q.clientPhone = q.client_phone || '';
+  if(!q.clientAddr) q.clientAddr = q.client_addr || '';
   const iRows=q.items.map((it,i)=>{
     const lines=(it.name||'').split('\n');
     const firstLine=esc(lines[0]||'—');
