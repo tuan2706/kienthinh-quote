@@ -3162,6 +3162,15 @@ function exportProjectPDF(id){
     .main-table th{background:#1a2f45;color:#fff;padding:6px 8px;font-size:8.5pt;text-align:center;border:1px solid #2d4f6b}
     .main-table td{border:1px solid #ddd;padding:4px 6px;font-size:9pt;vertical-align:top}
     .total-row td{background:#1a2f45;color:#fff;font-weight:800;font-size:11pt;padding:8px 10px}
+    .main-table tfoot{display:table-row-group}
+    .no-break{page-break-inside:avoid}
+    .total-section{page-break-inside:avoid;page-break-before:avoid}
+    @media print{
+      @page{margin:0;size:A4}
+      body{padding:15mm 18mm}
+      .total-section{page-break-inside:avoid !important}
+      tfoot{display:table-footer-group}
+    }
   </style></head><body>
   <!-- Header -->
   <table style="margin-bottom:16px;border:none">
@@ -3205,14 +3214,14 @@ function exportProjectPDF(id){
       <th style="width:105px;text-align:right">TT sau VAT</th>
     </tr></thead>
     <tbody>${itemRows}</tbody>
-    <tfoot>
-      <tr>
-        <td colspan="7" style="text-align:right;font-weight:700;background:#eef2f7;padding:7px 10px;font-size:10pt">TỔNG GIÁ TRƯỚC THUẾ:</td>
-        <td colspan="2" style="text-align:right;font-weight:700;background:#eef2f7;font-size:11pt;padding:7px 10px;white-space:nowrap">${calc.totalBefore.toLocaleString('vi-VN')} VNĐ</td>
+    <tfoot class="total-section">
+      <tr class="no-break">
+        <td colspan="7" style="text-align:right;font-weight:700;background:#eef2f7;padding:8px 10px;font-size:10pt;border-top:2px solid #1a2f45">TỔNG GIÁ TRƯỚC THUẾ:</td>
+        <td colspan="2" style="text-align:right;font-weight:700;background:#eef2f7;font-size:11pt;padding:8px 10px;white-space:nowrap;border-top:2px solid #1a2f45">${calc.totalBefore.toLocaleString('vi-VN')} VNĐ</td>
       </tr>
-      <tr class="total-row">
-        <td colspan="7" style="text-align:right;font-size:10.5pt">TỔNG GIÁ SAU THUẾ VAT ${vat}%:</td>
-        <td colspan="2" style="text-align:right;font-size:12pt;white-space:nowrap">${calc.totalAfter.toLocaleString('vi-VN')} VNĐ</td>
+      <tr class="total-row no-break">
+        <td colspan="7" style="text-align:right;font-size:10.5pt;padding:10px">TỔNG GIÁ SAU THUẾ VAT ${vat}%:</td>
+        <td colspan="2" style="text-align:right;font-size:12pt;white-space:nowrap;padding:10px">${calc.totalAfter.toLocaleString('vi-VN')} VNĐ</td>
       </tr>
     </tfoot>
   </table>
@@ -4431,9 +4440,11 @@ function renderUserMgmt(){
             <td style="padding:9px 10px;border-bottom:1px solid var(--border);color:var(--text2)">${esc(u.phone||'—')}</td>
             <td style="padding:9px 10px;border-bottom:1px solid var(--border)">${statusBadge[u.status]||statusBadge.pending}</td>
             <td style="padding:9px 10px;border-bottom:1px solid var(--border)">
-              <div style="display:flex;gap:6px">
+              <div style="display:flex;gap:6px;flex-wrap:wrap">
                 ${u.status==='pending'?`<button class="btn btn-s" style="padding:3px 10px;font-size:10px" onclick="approveUser('${u.email}','${esc(u.full_name||'')}','${u.password||''}')">✅ Duyệt</button>`:''}
                 ${u.status==='pending'?`<button class="btn btn-danger" style="padding:3px 10px;font-size:10px" onclick="rejectUser('${u.email}')">❌ Từ chối</button>`:''}
+                ${u.status==='approved'?`<button class="btn btn-g" style="padding:3px 10px;font-size:10px;color:#f0b355" onclick="suspendUser('${u.email}')">🚫 Thu hồi</button>`:''}
+                <button class="btn btn-danger" style="padding:3px 10px;font-size:10px;opacity:0.7" onclick="deleteUser('${u.email}','${esc(u.full_name||'')}')">🗑 Xóa</button>
               </div>
             </td>
           </tr>`).join('')}</tbody>
@@ -4461,6 +4472,20 @@ async function rejectUser(email){
   if(!confirm('Từ chối tài khoản '+email+'?')) return;
   await sb.from('pending_users').update({status:'rejected'}).eq('email',email);
   toast('Đã từ chối','warning',email);
+  renderUserMgmt();
+}
+
+async function suspendUser(email){
+  if(!confirm('Thu hồi quyền truy cập của '+email+'?\nTài khoản vẫn còn nhưng không đăng nhập được.')) return;
+  await sb.from('pending_users').update({status:'rejected'}).eq('email',email);
+  toast('Đã thu hồi quyền truy cập','warning',email);
+  renderUserMgmt();
+}
+
+async function deleteUser(email, name){
+  if(!confirm('XÓA HOÀN TOÀN tài khoản của '+name+' ('+email+')?\nThao tác này không thể hoàn tác.')) return;
+  await sb.from('pending_users').delete().eq('email',email);
+  toast('Đã xóa tài khoản','warning',name);
   renderUserMgmt();
 }
 
@@ -4783,6 +4808,8 @@ function buildHTML(q,co,forPrint){
   const t=ct(q.items,q.discPct,q.vatPct);
   const logo=co.logoDataUrl?`<img src="${co.logoDataUrl}" class="qlogo" alt="Logo">`:'';
   const dText=getDT(q);const pText=getPT(q);
+  // Ensure clientName fallback
+  if(!q.clientName) q.clientName = '—';
   const iRows=q.items.map((it,i)=>{
     const lines=(it.name||'').split('\n');
     const firstLine=esc(lines[0]||'—');
