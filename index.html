@@ -1470,6 +1470,7 @@ function loginUser(user,name){
   suppliers=ULS.get('sup')||[];
   templates=ULS.get('tpl')||[];
   auditLog=ULS.get('log')||[];
+  priceHistory=ULS.get('ph')||[];
   const saved=ULS.get('calc');
   if(saved)calcState={...calcState,...saved};
   // Load dữ liệu từ Drive nếu đã có token (async, không block UI)
@@ -3278,9 +3279,9 @@ function renderProjectEditor(el){
               <td><input class="pq-table" value="${esc(it.brand)}" oninput="cpq.groups[${gi}].items[${ii}].brand=this.value" placeholder="Hãng - Xuất xứ" id="pqbrand-${gi}-${ii}"></td>
               <td style="text-align:right"><input class="pq-table" type="number" value="${it.qty||1}" min="1" style="text-align:right;width:40px" oninput="cpq.groups[${gi}].items[${ii}].qty=+this.value;refreshProjectCalc()"></td>
               <td style="text-align:right"><input class="pq-table" value="${it.priceBeforeTax>0?it.priceBeforeTax.toLocaleString('vi-VN'):''}" placeholder="0"
-                style="text-align:right" id="pqprice-${gi}-${ii}"
+                style="text-align:right" id="pqprice-${gi}-${ii}" inputmode="numeric"
                 oninput="const n=formatMoney(this);cpq.groups[${gi}].items[${ii}].priceBeforeTax=n;refreshProjectCalc()"
-                onfocus="this.value=cpq.groups[${gi}].items[${ii}].priceBeforeTax||'';this.select()"></td>
+                onfocus="this.select()"></td>
               <td style="text-align:right;font-weight:600;color:var(--text2)" id="pql-${it.id}">${fm(it.lineBefore,'VND')}</td>
               <td style="text-align:center">
                 <input class="pq-table" type="number" value="${it.vatPct!==undefined?it.vatPct:pq.vatPct||8}" min="0" max="100" style="text-align:center;width:44px"
@@ -3414,9 +3415,9 @@ function addPQItem(gi){
     <td style="padding:4px 6px;text-align:right"><input class="pq-table" type="number" value="1" min="1" style="text-align:right;width:40px"
       oninput="cpq.groups[${gi}].items[${ii}].qty=+this.value;refreshProjectCalc()"></td>
     <td style="padding:4px 6px;text-align:right"><input class="pq-table" id="pqprice-${gi}-${ii}" placeholder="0"
-      style="text-align:right;width:100%"
+      style="text-align:right;width:100%" inputmode="numeric"
       oninput="const n=formatMoney(this);cpq.groups[${gi}].items[${ii}].priceBeforeTax=n;refreshProjectCalc()"
-      onfocus="this.value=cpq.groups[${gi}].items[${ii}].priceBeforeTax||'';this.select()"></td>
+      onfocus="this.select()"></td>
     <td style="text-align:right;font-weight:600;color:var(--text2);padding:4px 6px" id="pql-${it.id}">₫0</td>
     <td style="text-align:center;padding:4px 6px"><input class="pq-table" type="number" value="${vat}" min="0" max="100" style="text-align:center;width:44px"
       oninput="cpq.groups[${gi}].items[${ii}].vatPct=+this.value;refreshProjectCalc()"></td>
@@ -4088,8 +4089,9 @@ function renderCalc(el){
     <td><input class="ci" type="number" style="width:68px" value="${it.factor}" min="0" max="1" step="0.01" oninput="cit(${it.id},'factor',+this.value||0)" placeholder="0.85"></td>
     <td style="text-align:right;font-weight:600;color:var(--accent2);padding-right:6px;white-space:nowrap" id="ci-tot-${it.id}">${fmVND(itemVND(it))}</td>
     <td style="text-align:right;padding-right:4px">
-      <input class="ci" type="number" style="width:115px;text-align:right;color:var(--success)" value="${it.sellPrice||0}" min="0" step="1000"
-        oninput="cit(${it.id},'sellPrice',+this.value||0);refreshCalc()"
+      <input class="ci" style="width:115px;text-align:right;color:var(--success)" value="${it.sellPrice?Number(it.sellPrice).toLocaleString('vi-VN'):''}" inputmode="numeric"
+        oninput="const n=formatMoney(this);cit(${it.id},'sellPrice',n);refreshCalc()"
+        onfocus="this.select()"
         placeholder="0" title="Giá bán ra cho sản phẩm này (VND)">
     </td>
     <td><button class="db" onclick="delCI(${it.id})">✕</button></td>
@@ -4222,9 +4224,10 @@ function renderCalc(el){
         <div class="card-title">💰 Giá bán ra</div>
         <div class="calc-row">
           <span class="calc-label">Giá bán ra (trước VAT)</span>
-          <input class="calc-inp wide" type="number" id="sell-inp" 
-            value="${s.sellPrice||0}" min="0" step="100000"
-            oninput="calcState.sellPrice=+this.value||0;saveCalc();refreshCalc()">
+          <input class="calc-inp wide" id="sell-inp" inputmode="numeric"
+            value="${s.sellPrice?Number(s.sellPrice).toLocaleString('vi-VN'):''}" placeholder="0"
+            oninput="const n=formatMoney(this);calcState.sellPrice=n;saveCalc();refreshCalc()"
+            onfocus="this.select()">
           <span style="font-size:11px;color:var(--muted)">VND</span>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center">
@@ -4355,7 +4358,7 @@ function setSellByMargin(m){
   const r=calcEngine();
   calcState.sellPrice=Math.round(r.totalCost*m/100000)*100000;
   saveCalc();
-  const inp=document.getElementById('sell-inp');if(inp)inp.value=calcState.sellPrice;
+  const inp=document.getElementById('sell-inp');if(inp)inp.value=calcState.sellPrice?Number(calcState.sellPrice).toLocaleString('vi-VN'):'';
   refreshCalcDisplay(calcEngine());
 }
 function applyCustomMargin(){
@@ -4974,171 +4977,249 @@ function delSupRow(id){
 }
 
 // ── LỊCH SỬ GIÁ ĐẦU VÀO (giá mua) ─────────────────────────────
+// ── LỊCH SỬ GIÁ ĐẦU VÀO (theo ĐƠN MUA / HỢP ĐỒNG) ─────────────
+// Mỗi bản ghi = 1 đơn mua/hợp đồng từ 1 nhà cung cấp, chứa NHIỀU mặt hàng.
+// Schema: {id, supplierName, poNumber, date, note, items:[{name,code,price,currency,qty}], createdBy, createdAt}
 let _phSearch = '';
 function fmtPHDate(iso){ if(!iso) return ''; try{ return new Date(iso).toLocaleDateString('vi-VN'); }catch(e){ return iso; } }
 function fmtPHMoney(n,cur){ const s=Math.round(n||0).toLocaleString('vi-VN'); return s+(cur==='USD'?' $':cur==='EUR'?' €':' ₫'); }
+// Tổng tiền 1 đơn (cộng các dòng cùng tiền tệ chủ đạo)
+function phOrderTotal(order){
+  const items=order.items||[];
+  const curCount={}; items.forEach(it=>{const c=it.currency||'VND';curCount[c]=(curCount[c]||0)+1;});
+  const mainCur=Object.entries(curCount).sort((a,b)=>b[1]-a[1])[0]?.[0]||'VND';
+  const total=items.filter(it=>(it.currency||'VND')===mainCur).reduce((s,it)=>s+(it.price||0)*(it.qty||1),0);
+  return {total, cur:mainCur};
+}
 
 function renderPriceHistory(el){
-  const total = priceHistory.length;
-  // Gom nhóm theo mặt hàng (key = mã nếu có, không thì tên chuẩn hoá) để tra cứu nhanh
   const kw = stripVN(_phSearch||'');
-  const filtered = kw ? priceHistory.filter(r=>
-    stripVN(r.itemName||'').includes(kw) || stripVN(r.itemCode||'').includes(kw) || stripVN(r.supplierName||'').includes(kw)
-  ) : priceHistory;
+  const orders = priceHistory.filter(o=>o && o.items); // chỉ lấy bản ghi đúng cấu trúc đơn
+  const filtered = kw ? orders.filter(o=>
+    stripVN(o.supplierName||'').includes(kw) ||
+    stripVN(o.poNumber||'').includes(kw) ||
+    (o.items||[]).some(it=> stripVN(it.name||'').includes(kw) || stripVN(it.code||'').includes(kw))
+  ) : orders;
   const sorted = [...filtered].sort((a,b)=> new Date(b.date||b.createdAt||0) - new Date(a.date||a.createdAt||0));
+  const totalOrders = orders.length;
+  const totalItems = orders.reduce((s,o)=>s+(o.items?.length||0),0);
 
   el.innerHTML = `
   <div class="card">
     <div class="card-title">💰 Lịch sử giá đầu vào</div>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Lưu lại giá mua từng lần theo mặt hàng &amp; nhà cung cấp, để tra cứu và so sánh giá qua thời gian.</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Mỗi bản ghi là một <b>đơn mua / hợp đồng</b> từ nhà cung cấp, chứa nhiều mặt hàng. Dùng để tra cứu và so sánh giá đầu vào qua thời gian.</div>
     <div class="abar" style="margin-bottom:12px">
-      <button class="btn btn-p" onclick="openPriceModal()">➕ Ghi nhận giá mua</button>
-      <input class="inp" id="ph-q" value="${esc(_phSearch)}" placeholder="🔍  Tìm theo tên hàng, mã, nhà cung cấp..." oninput="_phSearch=this.value;renderPriceHistory(document.getElementById('sup-tab-body'))" style="max-width:360px;flex:1">
-      ${total?`<button class="btn btn-g" onclick="exportPriceHistoryExcel()">📤 Export Excel</button>`:''}
+      <button class="btn btn-p" onclick="openPriceModal()">➕ Tạo đơn mua</button>
+      <input class="inp" id="ph-q" value="${esc(_phSearch)}" placeholder="🔍  Tìm theo nhà cung cấp, số HĐ, tên/mã hàng..." oninput="_phSearch=this.value;renderPriceHistory(document.getElementById('sup-tab-body'))" style="max-width:380px;flex:1">
+      ${totalOrders?`<button class="btn btn-g" onclick="exportPriceHistoryExcel()">📤 Export Excel</button>`:''}
     </div>
-    ${total?`<div class="cat-stats"><div class="cat-stat"><b>${total}</b>Bản ghi giá</div><div class="cat-stat"><b>${new Set(priceHistory.map(r=>r.itemCode||stripVN(r.itemName||''))).size}</b>Mặt hàng</div></div>`:''}
+    ${totalOrders?`<div class="cat-stats">
+      <div class="cat-stat"><b>${totalOrders}</b>Đơn mua</div>
+      <div class="cat-stat"><b>${totalItems}</b>Dòng thiết bị</div>
+      <div class="cat-stat"><b>${new Set(orders.flatMap(o=>(o.items||[]).map(it=>it.code||stripVN(it.name||'')))).size}</b>Mặt hàng khác nhau</div>
+    </div>`:''}
     ${sorted.length ? `
-    <div class="cat-table-wrap">
-      <table class="cat-table">
-        <thead><tr>
-          <th>Ngày</th><th>Tên hàng hóa</th><th>Mã hàng</th><th>Nhà cung cấp</th>
-          <th style="text-align:right">Giá mua</th><th style="text-align:center">SL</th><th>Ghi chú</th><th></th>
-        </tr></thead>
-        <tbody>${sorted.map(r=>`<tr>
-          <td style="white-space:nowrap;color:var(--text2)">${fmtPHDate(r.date||r.createdAt)}</td>
-          <td style="font-weight:600">${esc(r.itemName||'')}
-            <button class="btn btn-g" style="padding:1px 6px;font-size:10px;margin-left:4px" onclick="openItemPriceTrend('${esc((r.itemCode||r.itemName||'').replace(/'/g,''))}')" title="Xem lịch sử giá mặt hàng này">📈</button>
-          </td>
-          <td style="color:var(--accent2);font-weight:600">${esc(r.itemCode||'')}</td>
-          <td>${esc(r.supplierName||'')}</td>
-          <td style="text-align:right;font-weight:700;white-space:nowrap">${fmtPHMoney(r.price,r.currency)}</td>
-          <td style="text-align:center;color:var(--text2)">${r.qty||1}</td>
-          <td style="color:var(--muted);font-size:11px">${esc(r.note||'')}</td>
-          <td style="white-space:nowrap">
-            <button class="btn btn-g" style="padding:3px 8px;font-size:10px" onclick="openPriceModal('${r.id}')">✏️</button>
-            <button class="btn btn-g" style="padding:3px 8px;font-size:10px;color:#A32D2D" onclick="delPriceRow('${r.id}')">✕</button>
-          </td>
-        </tr>`).join('')}</tbody>
-      </table>
+    <div style="display:flex;flex-direction:column;gap:12px;margin-top:6px">
+      ${sorted.map(o=>{
+        const {total,cur}=phOrderTotal(o);
+        return `<div class="pq-list-card" style="cursor:default">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap">
+            <div style="flex:1;min-width:200px">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap">
+                <span style="font-size:14px;font-weight:700;color:var(--text)">🏭 ${esc(o.supplierName||'(Chưa rõ NCC)')}</span>
+                ${o.poNumber?`<span style="font-size:11px;font-weight:700;color:var(--accent2);background:var(--bg2);padding:2px 8px;border-radius:20px">${esc(o.poNumber)}</span>`:''}
+              </div>
+              <div style="font-size:11px;color:var(--text3);margin-bottom:8px">📅 ${fmtPHDate(o.date||o.createdAt)} · ${o.items.length} mặt hàng${o.note?' · 📝 '+esc(o.note):''}</div>
+              <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
+                <table style="width:100%;border-collapse:collapse;font-size:12px">
+                  <thead><tr>
+                    <th style="background:var(--bg2);color:var(--text3);padding:6px 9px;text-align:left;font-size:10px;text-transform:uppercase">Tên thiết bị</th>
+                    <th style="background:var(--bg2);color:var(--text3);padding:6px 9px;text-align:left;font-size:10px;text-transform:uppercase">Mã</th>
+                    <th style="background:var(--bg2);color:var(--text3);padding:6px 9px;text-align:center;font-size:10px;text-transform:uppercase">SL</th>
+                    <th style="background:var(--bg2);color:var(--text3);padding:6px 9px;text-align:right;font-size:10px;text-transform:uppercase">Đơn giá</th>
+                    <th style="background:var(--bg2);color:var(--text3);padding:6px 9px;text-align:center;font-size:10px;text-transform:uppercase"></th>
+                  </tr></thead>
+                  <tbody>${o.items.map(it=>`<tr>
+                    <td style="padding:6px 9px;border-top:1px solid var(--border);font-weight:600">${esc(it.name||'')}</td>
+                    <td style="padding:6px 9px;border-top:1px solid var(--border);color:var(--accent2);font-weight:600">${esc(it.code||'')}</td>
+                    <td style="padding:6px 9px;border-top:1px solid var(--border);text-align:center;color:var(--text2)">${it.qty||1}</td>
+                    <td style="padding:6px 9px;border-top:1px solid var(--border);text-align:right;font-weight:700;white-space:nowrap">${fmtPHMoney(it.price,it.currency)}</td>
+                    <td style="padding:6px 9px;border-top:1px solid var(--border);text-align:center"><button class="btn btn-g" style="padding:1px 6px;font-size:10px" onclick="openItemPriceTrend('${esc((it.code||it.name||'').replace(/'/g,''))}')" title="Xem lịch sử giá mặt hàng này">📈</button></td>
+                  </tr>`).join('')}</tbody>
+                </table>
+              </div>
+            </div>
+            <div style="text-align:right;white-space:nowrap;min-width:140px">
+              <div style="font-size:10px;color:var(--text3)">Tổng đơn</div>
+              <div style="font-size:16px;font-weight:800;color:var(--accent2)">${fmtPHMoney(total,cur)}</div>
+              <div style="display:flex;gap:6px;margin-top:10px;justify-content:flex-end">
+                <button class="btn btn-g" style="font-size:10px;padding:4px 9px" onclick="openPriceModal('${o.id}')">✏️ Sửa</button>
+                <button class="btn btn-danger" style="font-size:10px;padding:4px 9px" onclick="delPriceRow('${o.id}')">🗑 Xoá</button>
+              </div>
+            </div>
+          </div>
+        </div>`;
+      }).join('')}
     </div>` : `
     <div class="empty-state">
       <div class="empty-state-icon">💰</div>
-      <div class="empty-state-title">${total?'Không tìm thấy bản ghi phù hợp':'Chưa có bản ghi giá đầu vào nào'}</div>
-      <div class="empty-state-desc">Mỗi lần nhập hàng, ghi lại giá mua ở đây. Sau này bạn có thể tra cứu giá cũ,<br>so sánh giá giữa các nhà cung cấp và các lần mua khác nhau.</div>
-      ${!total?`<button class="btn btn-p" style="margin-top:10px" onclick="openPriceModal()">➕ Ghi nhận giá mua đầu tiên</button>`:''}
+      <div class="empty-state-title">${totalOrders?'Không tìm thấy đơn mua phù hợp':'Chưa có đơn mua nào'}</div>
+      <div class="empty-state-desc">Mỗi lần mua hàng, tạo một đơn mua/hợp đồng và nhập tất cả thiết bị đã mua từ nhà cung cấp đó.<br>Sau này bạn tra cứu được giá cũ, so sánh giá giữa các lần mua và các nhà cung cấp.</div>
+      ${!totalOrders?`<button class="btn btn-p" style="margin-top:10px" onclick="openPriceModal()">➕ Tạo đơn mua đầu tiên</button>`:''}
     </div>`}
   </div>`;
 }
 
+// Dòng nhập 1 thiết bị trong modal đơn mua
+function phItemRowHtml(it){
+  it = it||{};
+  return `<tr class="ph-item-row">
+    <td style="padding:4px"><input class="inp ph-it-name" list="ph-name-list" value="${esc(it.name||'')}" placeholder="Tên thiết bị" oninput="phRowSuggestCode(this)" style="font-size:12px;min-width:150px"></td>
+    <td style="padding:4px"><input class="inp ph-it-code" value="${esc(it.code||'')}" placeholder="Mã" style="font-size:12px;width:100px"></td>
+    <td style="padding:4px"><input class="inp ph-it-qty" value="${it.qty||1}" placeholder="1" style="font-size:12px;width:52px;text-align:center" oninput="this.value=this.value.replace(/[^0-9]/g,'')"></td>
+    <td style="padding:4px"><input class="inp ph-it-price" value="${it.price?Number(it.price).toLocaleString('vi-VN'):''}" placeholder="0" style="font-size:12px;width:120px;text-align:right" inputmode="numeric" oninput="onPriceInput(this)"></td>
+    <td style="padding:4px"><select class="inp ph-it-cur" style="font-size:12px;width:66px">${['VND','USD','EUR'].map(c=>`<option value="${c}"${(it.currency||'VND')===c?' selected':''}>${c}</option>`).join('')}</select></td>
+    <td style="padding:4px;text-align:center"><button class="pq-del-btn" onclick="this.closest('tr').remove()" title="Xoá dòng">✕</button></td>
+  </tr>`;
+}
+
 function openPriceModal(id){
-  const rec = id ? priceHistory.find(r=>r.id===id) : null;
-  const isEdit = !!rec;
-  const supOpts = suppliers.map(s=>`<option value="${esc(s.name)}"${rec&&rec.supplierName===s.name?' selected':''}>${esc(s.name)}</option>`).join('');
+  const order = id ? priceHistory.find(o=>o.id===id) : null;
+  const isEdit = !!order;
+  const items = order && order.items && order.items.length ? order.items : [{}];
+  const supOpts = suppliers.map(s=>`<option value="${esc(s.name)}">`).join('');
   const old=document.getElementById('price-modal'); if(old)old.remove();
   const m=document.createElement('div');
   m.id='price-modal';
-  m.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;overflow:auto';
+  m.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:24px 16px;overflow:auto';
   m.innerHTML=`
-    <div style="background:var(--panel);border-radius:14px;padding:22px;max-width:520px;width:100%">
-      <div style="font-size:16px;font-weight:700;margin-bottom:16px;color:var(--text)">${isEdit?'✏️ Sửa bản ghi giá':'➕ Ghi nhận giá mua'}</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div style="grid-column:1/3"><label class="lbl">Tên hàng hóa <span style="color:var(--danger)">*</span></label>
-          <input class="inp" id="pm-name" list="pm-name-list" value="${esc(rec?.itemName||'')}" placeholder="VD: Thiết bị đo COD" oninput="phSuggestCode(this.value)">
-          <datalist id="pm-name-list">${catalog.map(c=>`<option value="${esc(c.name)}">`).join('')}</datalist>
-        </div>
-        <div><label class="lbl">Mã hàng</label><input class="inp" id="pm-code" value="${esc(rec?.itemCode||'')}" placeholder="VD: CAS51D"></div>
-        <div><label class="lbl">Nhà cung cấp</label>
-          <input class="inp" id="pm-sup" list="pm-sup-list" value="${esc(rec?.supplierName||'')}" placeholder="Chọn/nhập NCC">
+    <div style="background:var(--panel);border-radius:14px;padding:22px;max-width:760px;width:100%;margin:auto">
+      <div style="font-size:16px;font-weight:700;margin-bottom:16px;color:var(--text)">${isEdit?'✏️ Sửa đơn mua':'➕ Tạo đơn mua / hợp đồng'}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px">
+        <div><label class="lbl">Nhà cung cấp <span style="color:var(--danger)">*</span></label>
+          <input class="inp" id="pm-sup" list="pm-sup-list" value="${esc(order?.supplierName||'')}" placeholder="Chọn/nhập NCC">
           <datalist id="pm-sup-list">${supOpts}</datalist>
         </div>
-        <div><label class="lbl">Giá mua <span style="color:var(--danger)">*</span></label><input class="inp" id="pm-price" value="${rec?rec.price:''}" placeholder="0" oninput="this.value=this.value.replace(/[^0-9.]/g,'')"></div>
-        <div><label class="lbl">Tiền tệ</label><select class="inp" id="pm-cur">
-          ${['VND','USD','EUR'].map(c=>`<option value="${c}"${(rec?.currency||'VND')===c?' selected':''}>${c}</option>`).join('')}
-        </select></div>
-        <div><label class="lbl">Số lượng</label><input class="inp" id="pm-qty" value="${rec?.qty||1}" placeholder="1"></div>
-        <div><label class="lbl">Ngày mua/báo giá</label><input class="inp" type="date" id="pm-date" value="${rec?.date? rec.date.slice(0,10) : new Date().toISOString().slice(0,10)}"></div>
-        <div style="grid-column:1/3"><label class="lbl">Ghi chú</label><input class="inp" id="pm-note" value="${esc(rec?.note||'')}" placeholder="VD: giá theo báo giá hãng, có/chưa VAT..."></div>
+        <div><label class="lbl">Số HĐ / Đơn mua</label><input class="inp" id="pm-po" value="${esc(order?.poNumber||'')}" placeholder="VD: PO-2026-001"></div>
+        <div><label class="lbl">Ngày mua</label><input class="inp" type="date" id="pm-date" value="${order?.date? order.date.slice(0,10) : new Date().toISOString().slice(0,10)}"></div>
       </div>
+      <div style="margin-bottom:8px"><label class="lbl">Danh sách thiết bị đã mua</label></div>
+      <div style="border:1px solid var(--border);border-radius:8px;overflow:auto">
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr>
+            <th style="background:var(--bg2);color:var(--text3);padding:7px 8px;text-align:left;font-size:10px;text-transform:uppercase">Tên thiết bị</th>
+            <th style="background:var(--bg2);color:var(--text3);padding:7px 8px;text-align:left;font-size:10px;text-transform:uppercase">Mã hàng</th>
+            <th style="background:var(--bg2);color:var(--text3);padding:7px 8px;text-align:center;font-size:10px;text-transform:uppercase">SL</th>
+            <th style="background:var(--bg2);color:var(--text3);padding:7px 8px;text-align:right;font-size:10px;text-transform:uppercase">Đơn giá</th>
+            <th style="background:var(--bg2);color:var(--text3);padding:7px 8px;text-align:center;font-size:10px;text-transform:uppercase">Tiền tệ</th>
+            <th style="background:var(--bg2);padding:7px 8px"></th>
+          </tr></thead>
+          <tbody id="ph-items-body">${items.map(it=>phItemRowHtml(it)).join('')}</tbody>
+        </table>
+      </div>
+      <datalist id="ph-name-list">${catalog.map(c=>`<option value="${esc(c.name)}">`).join('')}</datalist>
+      <button class="pq-add-row" style="margin-top:10px" onclick="document.getElementById('ph-items-body').insertAdjacentHTML('beforeend', phItemRowHtml({}))">＋ Thêm thiết bị</button>
+      <div style="margin-top:14px"><label class="lbl">Ghi chú đơn</label><input class="inp" id="pm-note" value="${esc(order?.note||'')}" placeholder="VD: giá đã gồm VAT, kèm vận chuyển..."></div>
       <div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end">
         <button class="btn btn-g" onclick="document.getElementById('price-modal').remove()">Huỷ</button>
-        <button class="btn btn-p" onclick="savePriceModal(${isEdit?`'${rec.id}'`:'null'})">${isEdit?'💾 Lưu':'➕ Thêm'}</button>
+        <button class="btn btn-p" onclick="savePriceModal(${isEdit?`'${order.id}'`:'null'})">${isEdit?'💾 Lưu đơn':'➕ Tạo đơn'}</button>
       </div>
     </div>`;
   document.body.appendChild(m);
-  setTimeout(()=>document.getElementById('pm-name')?.focus(),80);
+  setTimeout(()=>document.getElementById('pm-sup')?.focus(),80);
 }
 
-// Gợi ý mã hàng khi chọn tên trùng danh mục
-function phSuggestCode(name){
-  const hit = catalog.find(c=>stripVN(c.name||'')===stripVN(name||''));
-  if(hit){
-    const codeEl=document.getElementById('pm-code');
-    if(codeEl && !codeEl.value) codeEl.value = hit.code||'';
+// Gợi ý mã hàng theo tên (trên từng dòng)
+function phRowSuggestCode(inp){
+  const tr=inp.closest('tr');
+  const codeEl=tr?.querySelector('.ph-it-code');
+  if(codeEl && !codeEl.value){
+    const hit=catalog.find(c=>stripVN(c.name||'')===stripVN(inp.value||''));
+    if(hit) codeEl.value=hit.code||'';
   }
 }
 
 function savePriceModal(id){
-  const name=(document.getElementById('pm-name')?.value||'').trim();
-  const price=parseFloat(document.getElementById('pm-price')?.value||'0');
-  if(!name){toast('Vui lòng nhập tên hàng hóa','error');return;}
-  if(!price||price<=0){toast('Vui lòng nhập giá mua hợp lệ','error');return;}
-  const rec={
-    itemName:name,
-    itemCode:(document.getElementById('pm-code')?.value||'').trim(),
-    supplierName:(document.getElementById('pm-sup')?.value||'').trim(),
-    price:price,
-    currency:document.getElementById('pm-cur')?.value||'VND',
-    qty:parseInt(document.getElementById('pm-qty')?.value||'1')||1,
+  const supplierName=(document.getElementById('pm-sup')?.value||'').trim();
+  if(!supplierName){toast('Vui lòng nhập nhà cung cấp','error');return;}
+  // Thu thập các dòng thiết bị
+  const rows=[...document.querySelectorAll('#ph-items-body .ph-item-row')];
+  const items=[];
+  for(const tr of rows){
+    const name=(tr.querySelector('.ph-it-name')?.value||'').trim();
+    const price=parseMoney(tr.querySelector('.ph-it-price')?.value||'0');
+    if(!name && !price) continue; // bỏ dòng trống
+    if(!name){toast('Có dòng thiếu tên thiết bị','error');return;}
+    if(!price||price<=0){toast('Thiết bị "'+name+'" chưa có giá hợp lệ','error');return;}
+    items.push({
+      name,
+      code:(tr.querySelector('.ph-it-code')?.value||'').trim(),
+      qty:parseInt(tr.querySelector('.ph-it-qty')?.value||'1')||1,
+      price,
+      currency:tr.querySelector('.ph-it-cur')?.value||'VND',
+    });
+  }
+  if(!items.length){toast('Vui lòng nhập ít nhất 1 thiết bị','error');return;}
+
+  const data={
+    supplierName,
+    poNumber:(document.getElementById('pm-po')?.value||'').trim(),
     date:document.getElementById('pm-date')?.value||new Date().toISOString().slice(0,10),
     note:(document.getElementById('pm-note')?.value||'').trim(),
+    items,
   };
+
   if(id){
-    const i=priceHistory.findIndex(r=>r.id===id);
-    if(i>=0) priceHistory[i]={...priceHistory[i],...rec};
-    logAction('Sửa giá đầu vào', name, fmtPHMoney(price,rec.currency));
+    const i=priceHistory.findIndex(o=>o.id===id);
+    if(i>=0) priceHistory[i]={...priceHistory[i],...data};
+    logAction('Sửa đơn mua', supplierName, items.length+' mặt hàng');
   }else{
-    rec.id='ph'+Date.now()+Math.floor(Math.random()*1000);
-    rec.createdBy=LS.get('bgpro:displayName')||currentUser||'';
-    rec.createdAt=new Date().toISOString();
-    priceHistory.unshift(rec);
-    logAction('Ghi nhận giá đầu vào', name, fmtPHMoney(price,rec.currency)+(rec.supplierName?' · '+rec.supplierName:''));
+    data.id='po'+Date.now()+Math.floor(Math.random()*1000);
+    data.createdBy=LS.get('bgpro:displayName')||currentUser||'';
+    data.createdAt=new Date().toISOString();
+    priceHistory.unshift(data);
+    logAction('Tạo đơn mua', supplierName, items.length+' mặt hàng');
   }
   ULS.set(KEYS.ph,priceHistory); sbAutoSync();
   document.getElementById('price-modal')?.remove();
   renderPriceHistory(document.getElementById('sup-tab-body'));
-  toast('Đã lưu giá đầu vào','success');
+  toast('Đã lưu đơn mua','success');
 }
 
 function delPriceRow(id){
-  const r=priceHistory.find(x=>x.id===id);
-  if(!confirm('Xoá bản ghi giá "'+(r?.itemName||'')+'"?'))return;
+  const o=priceHistory.find(x=>x.id===id);
+  if(!confirm('Xoá đơn mua từ "'+(o?.supplierName||'')+'"'+(o?.poNumber?' ('+o.poNumber+')':'')+'?'))return;
   priceHistory=priceHistory.filter(x=>x.id!==id);
   ULS.set(KEYS.ph,priceHistory); sbAutoSync();
   renderPriceHistory(document.getElementById('sup-tab-body'));
-  toast('Đã xoá bản ghi','warning');
-  logAction('Xoá giá đầu vào', r?.itemName||'', '');
+  toast('Đã xoá đơn mua','warning');
+  logAction('Xoá đơn mua', o?.supplierName||'', '');
 }
 
-// Xem biểu đồ xu hướng giá của 1 mặt hàng (theo mã hoặc tên)
+// Xem lịch sử giá 1 mặt hàng — gom tất cả các lần mua mặt hàng đó từ MỌI đơn
 function openItemPriceTrend(key){
   const k=stripVN(key||'');
-  const recs=priceHistory.filter(r=> stripVN(r.itemCode||'')===k || stripVN(r.itemName||'')===k )
-    .sort((a,b)=> new Date(a.date||a.createdAt||0) - new Date(b.date||b.createdAt||0));
+  // Duyệt mọi đơn, lấy dòng khớp mã hoặc tên
+  const recs=[];
+  priceHistory.forEach(o=>{
+    (o.items||[]).forEach(it=>{
+      if(stripVN(it.code||'')===k || stripVN(it.name||'')===k){
+        recs.push({...it, date:o.date||o.createdAt, supplierName:o.supplierName, poNumber:o.poNumber});
+      }
+    });
+  });
+  recs.sort((a,b)=> new Date(a.date||0) - new Date(b.date||0));
   if(!recs.length){toast('Chưa có dữ liệu giá cho mặt hàng này','error');return;}
-  const name=recs[recs.length-1].itemName||key;
-  // Quy các bản ghi cùng tiền tệ mới so sánh; ở đây chỉ so sánh trong cùng currency phổ biến nhất
+  const name=recs[recs.length-1].name||key;
   const curCount={}; recs.forEach(r=>{curCount[r.currency||'VND']=(curCount[r.currency||'VND']||0)+1;});
   const mainCur=Object.entries(curCount).sort((a,b)=>b[1]-a[1])[0][0];
   const sameCur=recs.filter(r=>(r.currency||'VND')===mainCur);
   const prices=sameCur.map(r=>r.price);
-  const min=Math.min(...prices), max=Math.max(...prices), latest=sameCur[sameCur.length-1].price;
-  const first=sameCur[0].price;
+  const min=Math.min(...prices), max=Math.max(...prices), latest=sameCur[sameCur.length-1].price, first=sameCur[0].price;
   const trend = latest>first ? '📈 Tăng' : latest<first ? '📉 Giảm' : '➡️ Không đổi';
   const trendColor = latest>first ? '#C0392B' : latest<first ? '#1B7A43' : '#666';
 
-  // Vẽ đường giá đơn giản bằng SVG
-  const W=440,H=140,pad=8;
-  const n=sameCur.length;
+  const W=440,H=140,pad=8,n=sameCur.length;
   const xs=i=> n<=1? W/2 : pad + i*(W-2*pad)/(n-1);
   const ys=p=> max===min ? H/2 : H-pad - (p-min)*(H-2*pad)/(max-min);
   const pts=sameCur.map((r,i)=>`${xs(i)},${ys(r.price)}`).join(' ');
@@ -5154,36 +5235,21 @@ function openItemPriceTrend(key){
         <div style="font-size:16px;font-weight:700;color:var(--text)">📈 Lịch sử giá: ${esc(name)}</div>
         <button class="btn btn-g" style="padding:3px 10px" onclick="document.getElementById('trend-modal').remove()">✕</button>
       </div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:14px">${sameCur.length} lần ghi nhận · đơn vị ${mainCur}</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px">${sameCur.length} lần mua · đơn vị ${mainCur}</div>
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">
-        <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center">
-          <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Mới nhất</div>
-          <div style="font-size:14px;font-weight:700;margin-top:3px">${fmtPHMoney(latest,mainCur)}</div>
-        </div>
-        <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center">
-          <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Thấp nhất</div>
-          <div style="font-size:14px;font-weight:700;margin-top:3px;color:#1B7A43">${fmtPHMoney(min,mainCur)}</div>
-        </div>
-        <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center">
-          <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Cao nhất</div>
-          <div style="font-size:14px;font-weight:700;margin-top:3px;color:#C0392B">${fmtPHMoney(max,mainCur)}</div>
-        </div>
-        <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center">
-          <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Xu hướng</div>
-          <div style="font-size:13px;font-weight:700;margin-top:3px;color:${trendColor}">${trend}</div>
-        </div>
+        <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center"><div style="font-size:10px;color:var(--text3);text-transform:uppercase">Mới nhất</div><div style="font-size:14px;font-weight:700;margin-top:3px">${fmtPHMoney(latest,mainCur)}</div></div>
+        <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center"><div style="font-size:10px;color:var(--text3);text-transform:uppercase">Thấp nhất</div><div style="font-size:14px;font-weight:700;margin-top:3px;color:#1B7A43">${fmtPHMoney(min,mainCur)}</div></div>
+        <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center"><div style="font-size:10px;color:var(--text3);text-transform:uppercase">Cao nhất</div><div style="font-size:14px;font-weight:700;margin-top:3px;color:#C0392B">${fmtPHMoney(max,mainCur)}</div></div>
+        <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center"><div style="font-size:10px;color:var(--text3);text-transform:uppercase">Xu hướng</div><div style="font-size:13px;font-weight:700;margin-top:3px;color:${trendColor}">${trend}</div></div>
       </div>
-      ${sameCur.length>1?`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;background:var(--bg2);border-radius:8px;margin-bottom:14px">
-        <polyline points="${pts}" fill="none" stroke="var(--accent2)" stroke-width="2"></polyline>${dots}
-      </svg>`:''}
+      ${sameCur.length>1?`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;background:var(--bg2);border-radius:8px;margin-bottom:14px"><polyline points="${pts}" fill="none" stroke="var(--accent2)" stroke-width="2"></polyline>${dots}</svg>`:''}
       <div style="max-height:200px;overflow:auto">
         <table class="cat-table" style="font-size:12px">
-          <thead><tr><th>Ngày</th><th>Nhà cung cấp</th><th style="text-align:right">Giá</th><th>Ghi chú</th></tr></thead>
+          <thead><tr><th>Ngày</th><th>Nhà cung cấp</th><th style="text-align:right">Giá</th></tr></thead>
           <tbody>${[...recs].reverse().map(r=>`<tr>
-            <td style="white-space:nowrap">${fmtPHDate(r.date||r.createdAt)}</td>
-            <td>${esc(r.supplierName||'')}</td>
+            <td style="white-space:nowrap">${fmtPHDate(r.date)}</td>
+            <td>${esc(r.supplierName||'')}${r.poNumber?' <span style="color:var(--text3)">('+esc(r.poNumber)+')</span>':''}</td>
             <td style="text-align:right;font-weight:600;white-space:nowrap">${fmtPHMoney(r.price,r.currency)}</td>
-            <td style="color:var(--muted)">${esc(r.note||'')}</td>
           </tr>`).join('')}</tbody>
         </table>
       </div>
@@ -5193,12 +5259,14 @@ function openItemPriceTrend(key){
 
 function exportPriceHistoryExcel(){
   if(typeof XLSX==='undefined'){toast('Thư viện Excel chưa tải xong, thử lại','error');return;}
-  const rows=[['Ngày','Tên hàng hóa','Mã hàng','Nhà cung cấp','Giá mua','Tiền tệ','Số lượng','Ghi chú','Người nhập']];
-  [...priceHistory].sort((a,b)=>new Date(b.date||b.createdAt||0)-new Date(a.date||a.createdAt||0)).forEach(r=>{
-    rows.push([fmtPHDate(r.date||r.createdAt), r.itemName||'', r.itemCode||'', r.supplierName||'', r.price||0, r.currency||'VND', r.qty||1, r.note||'', r.createdBy||'']);
+  const rows=[['Ngày','Nhà cung cấp','Số HĐ/Đơn','Tên thiết bị','Mã hàng','Số lượng','Đơn giá','Tiền tệ','Ghi chú đơn','Người nhập']];
+  [...priceHistory].filter(o=>o&&o.items).sort((a,b)=>new Date(b.date||b.createdAt||0)-new Date(a.date||a.createdAt||0)).forEach(o=>{
+    (o.items||[]).forEach(it=>{
+      rows.push([fmtPHDate(o.date||o.createdAt), o.supplierName||'', o.poNumber||'', it.name||'', it.code||'', it.qty||1, it.price||0, it.currency||'VND', o.note||'', o.createdBy||'']);
+    });
   });
   const ws=XLSX.utils.aoa_to_sheet(rows);
-  ws['!cols']=[{wch:12},{wch:32},{wch:16},{wch:24},{wch:16},{wch:8},{wch:8},{wch:30},{wch:16}];
+  ws['!cols']=[{wch:12},{wch:24},{wch:16},{wch:32},{wch:16},{wch:8},{wch:16},{wch:8},{wch:26},{wch:16}];
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,ws,'Lịch sử giá đầu vào');
   XLSX.writeFile(wb,`LichSuGiaDauVao_${new Date().toISOString().slice(0,10)}.xlsx`);
@@ -5572,7 +5640,7 @@ function openAddCatModal(editIdx){
           <input class="inp" id="cm-price" type="text" inputmode="numeric"
           placeholder="0" value="${p.price>0?p.price.toLocaleString('vi-VN'):''}"
           oninput="formatMoney(this)"
-          onfocus="this.value=parseMoney(this.value)||'';this.select()">
+          onfocus="this.select()">
         </div>
         <div>
           <label class="lbl">E. Hãng / Xuất xứ</label>
@@ -5584,7 +5652,7 @@ function openAddCatModal(editIdx){
         <input class="inp" id="cm-cost" type="text" inputmode="numeric"
         placeholder="0" value="${p.cost>0?p.cost.toLocaleString('vi-VN'):''}"
         oninput="formatMoney(this)"
-        onfocus="this.value=parseMoney(this.value)||'';this.select()">
+        onfocus="this.select()">
       </div>
       <div style="margin-bottom:18px">
         <label class="lbl" style="display:flex;justify-content:space-between;align-items:center">
