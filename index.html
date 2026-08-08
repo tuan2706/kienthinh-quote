@@ -1678,7 +1678,27 @@ const fn=(n,c='VND')=>{const x=CURR[c]||CURR.VND;return new Intl.NumberFormat(x.
 const tod=()=>new Date().toISOString().split('T')[0];
 const dl=d=>{const t=new Date();t.setDate(t.getDate()+d);return t.toISOString().split('T')[0];};
 const nqn=()=>'BG-'+new Date().getFullYear()+'-'+String(Math.floor(Math.random()*900)+100);
-const ct=(items,dp,vp)=>{const arr=Array.isArray(items)?items:[];const s=arr.reduce((a,i)=>a+((+i.qty||0)*(+i.price||0)),0);const da=s*dp/100;const ad=s-da;const va=ad*vp/100;return{sub:s,da,va,grand:ad+va};};
+const ct=(items,dp,vp)=>{
+  const arr=Array.isArray(items)?items:[];
+  const s=arr.reduce((a,i)=>a+((+i.qty||0)*(+i.price||0)),0);
+  const da=s*dp/100;              // tiền chiết khấu
+  const ad=s-da;                  // sau chiết khấu
+  // Thuế theo từng dòng: dòng nào có vatPct riêng thì dùng, không thì dùng vp chung.
+  // Chiết khấu phân bổ theo tỉ lệ để tính thuế đúng trên phần sau chiết khấu.
+  const ratio = s>0 ? ad/s : 1;
+  const vatByRate={};
+  arr.forEach(i=>{
+    const lineBase=(+i.qty||0)*(+i.price||0)*ratio;
+    const rate=(i.vatPct!==undefined && i.vatPct!==null && i.vatPct!=='') ? +i.vatPct : +vp;
+    vatByRate[rate]=(vatByRate[rate]||0)+lineBase*rate/100;
+  });
+  const vatBreakdown=Object.keys(vatByRate)
+    .map(r=>({rate:+r, amount:Math.round(vatByRate[r])}))
+    .filter(v=>v.amount>0)
+    .sort((a,b)=>a.rate-b.rate);
+  const va=vatBreakdown.reduce((a,v)=>a+v.amount,0); // tổng thuế
+  return{sub:s,da,va,grand:ad+va,vatBreakdown};
+};
 const esc=s=>(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 // Bỏ dấu tiếng Việt để tìm kiếm không phân biệt dấu/hoa-thường
 const stripVN=s=>(s||'').toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/gi,'d').toLowerCase();
@@ -2212,7 +2232,7 @@ function renderEditor(el){
     </div>
     <div style="overflow-x:auto">
       <table class="it">
-        <thead><tr><th style="width:28px">#</th><th>Tên hàng hóa / Vật tư</th><th style="width:78px">Mã SP</th><th style="width:90px">Hãng / Xuất xứ</th><th style="width:64px">ĐVT</th><th style="width:66px">SL</th><th style="width:112px">Đơn giá</th><th style="width:130px;text-align:right">Thành tiền</th><th style="width:30px"></th></tr></thead>
+        <thead><tr><th style="width:28px">#</th><th>Tên hàng hóa / Vật tư</th><th style="width:78px">Mã SP</th><th style="width:90px">Hãng / Xuất xứ</th><th style="width:64px">ĐVT</th><th style="width:66px">SL</th><th style="width:112px">Đơn giá</th><th style="width:64px;text-align:center">VAT</th><th style="width:130px;text-align:right">Thành tiền</th><th style="width:30px"></th></tr></thead>
         <tbody id="ib">${iRows}</tbody>
       </table>
     </div>
@@ -2307,10 +2327,17 @@ function initAutoH(){
 }
 
 function buildTH(t,q){
-  let h=`<div class="tr2"><span class="tl2">Tạm tính</span><span>${fm(t.sub,q.currency)}</span></div>`;
+  let h=`<div class="tr2"><span class="tl2">Tổng giá trước thuế</span><span>${fm(t.sub,q.currency)}</span></div>`;
   if(q.discPct>0)h+=`<div class="tr2"><span class="tl2">Chiết khấu (${q.discPct}%)</span><span style="color:#A32D2D">-${fm(t.da,q.currency)}</span></div>`;
-  if(q.vatPct>0)h+=`<div class="tr2"><span class="tl2">Thuế VAT (${q.vatPct}%)</span><span>${fm(t.va,q.currency)}</span></div>`;
-  h+=`<div class="tg"><span class="tl2">TỔNG CỘNG</span><span class="tv">${fm(t.grand,q.currency)}</span></div>`;
+  // Hiển thị thuế theo từng mức (nếu có dòng dùng mức riêng), ngược lại 1 dòng chung
+  if(t.vatBreakdown && t.vatBreakdown.length){
+    t.vatBreakdown.forEach(v=>{
+      h+=`<div class="tr2"><span class="tl2">Thuế VAT (${v.rate}%)</span><span>${fm(v.amount,q.currency)}</span></div>`;
+    });
+  } else if(q.vatPct>0){
+    h+=`<div class="tr2"><span class="tl2">Thuế VAT (${q.vatPct}%)</span><span>${fm(t.va,q.currency)}</span></div>`;
+  }
+  h+=`<div class="tg"><span class="tl2">Tổng giá sau thuế</span><span class="tv">${fm(t.grand,q.currency)}</span></div>`;
   return h;
 }
 // Áp dụng lợi nhuận mong muốn - điều chỉnh đơn giá theo tỉ lệ
@@ -2364,6 +2391,13 @@ function si(id,f,v){
   if(el)el.textContent=fm(it.qty*it.price,cq.currency||'VND');
   const tb=document.getElementById('totbox');if(tb)tb.innerHTML=buildTH(ct(cq.items,cq.discPct,cq.vatPct),cq);
   // Lưu cq ngay lập tức vào localStorage
+  LS.set('bgpro:autosave:cq', cq);
+}
+// Đặt mức VAT riêng cho 1 dòng ('' = dùng VAT chung của báo giá)
+function siVat(id,v){
+  const it=cq.items.find(i=>i.id===id);if(!it)return;
+  it.vatPct = (v===''||v===null||v===undefined) ? undefined : +v;
+  const tb=document.getElementById('totbox');if(tb)tb.innerHTML=buildTH(ct(cq.items,cq.discPct,cq.vatPct),cq);
   LS.set('bgpro:autosave:cq', cq);
 }
 function ai(){
@@ -3074,20 +3108,31 @@ let cpq = null; // current project quote
 function pqCalc(pq){
   const vat = (pq.vatPct||8)/100;
   let totalBefore = 0, totalAfter = 0;
+  const vatByRate = {}; // { '8': tiềnThuế, '10': tiềnThuế, ... }
   const groups = (pq.groups||[]).map(g=>{
     let gBefore=0, gAfter=0;
     const items = (g.items||[]).map(it=>{
       const lineBefore = (it.qty||1)*(it.priceBeforeTax||0);
-      const itemVat = (it.vatPct!==undefined ? it.vatPct : (pq.vatPct||8))/100;
-      const lineAfter = lineBefore*(1+itemVat);
+      const ratePct = (it.vatPct!==undefined ? it.vatPct : (pq.vatPct||8));
+      const itemVat = ratePct/100;
+      const lineTax = lineBefore*itemVat;
+      const lineAfter = lineBefore + lineTax;
       gBefore += lineBefore; gAfter += lineAfter;
+      // Gộp tiền thuế theo mức thuế
+      const key = String(ratePct);
+      vatByRate[key] = (vatByRate[key]||0) + lineTax;
       return {...it, lineBefore, lineAfter, itemVat};
     });
     gBefore=Math.round(gBefore); gAfter=Math.round(gAfter);
     totalBefore+=gBefore; totalAfter+=gAfter;
     return {...g, items, gBefore, gAfter};
   });
-  return { groups, totalBefore:Math.round(totalBefore), totalAfter:Math.round(totalAfter), vat };
+  // Làm tròn từng khoản thuế
+  const vatBreakdown = Object.keys(vatByRate)
+    .map(rate=>({rate:+rate, amount:Math.round(vatByRate[rate])}))
+    .filter(v=>v.amount>0)
+    .sort((a,b)=>a.rate-b.rate);
+  return { groups, totalBefore:Math.round(totalBefore), totalAfter:Math.round(totalAfter), vat, vatBreakdown };
 }
 
 // ── RENDER PROJECT PAGE ───────────────────────────────────────
@@ -3312,10 +3357,11 @@ function renderProjectEditor(el){
           <td colspan="3" style="font-size:13px;font-weight:700">TỔNG GIÁ TRƯỚC THUẾ</td>
           <td style="text-align:right;font-size:14px" id="pq-total-before">${fm(calc.totalBefore,'VND')}</td>
         </tr>
-        <tr>
-          <td colspan="3" style="color:var(--text2)">Thuế GTGT (${pq.vatPct}%)</td>
-          <td style="text-align:right;color:var(--text2)" id="pq-total-vat">${fm(Math.round(calc.totalBefore*(pq.vatPct||8)/100),'VND')}</td>
-        </tr>
+        <tbody id="pq-vat-rows">
+          ${(calc.vatBreakdown&&calc.vatBreakdown.length
+            ? calc.vatBreakdown.map(v=>`<tr><td colspan="3" style="color:var(--text2)">Thuế GTGT (${v.rate}%)</td><td style="text-align:right;color:var(--text2)">${fm(v.amount,'VND')}</td></tr>`).join('')
+            : `<tr><td colspan="3" style="color:var(--text2)">Thuế GTGT (${pq.vatPct}%)</td><td style="text-align:right;color:var(--text2)">${fm(Math.round(calc.totalBefore*(pq.vatPct||8)/100),'VND')}</td></tr>`)}
+        </tbody>
         <tr class="pq-grand-row">
           <td colspan="3" style="font-size:15px;font-weight:800">TỔNG GIÁ SAU THUẾ</td>
           <td style="text-align:right;font-size:15px;font-weight:800" id="pq-total-after">${fm(calc.totalAfter,'VND')}</td>
@@ -3464,11 +3510,16 @@ function refreshProjectCalc(){
   const calc = pqCalc(cpq);
   // Update totals
   const tb = document.getElementById('pq-total-before');
-  const tv = document.getElementById('pq-total-vat');
   const ta = document.getElementById('pq-total-after');
   if(tb) tb.textContent = fm(calc.totalBefore,'VND');
-  if(tv) tv.textContent = fm(Math.round(calc.totalBefore*(cpq.vatPct||8)/100),'VND');
   if(ta) ta.textContent = fm(calc.totalAfter,'VND');
+  // Cập nhật các dòng thuế theo mức
+  const vatRows = document.getElementById('pq-vat-rows');
+  if(vatRows){
+    vatRows.innerHTML = (calc.vatBreakdown&&calc.vatBreakdown.length
+      ? calc.vatBreakdown.map(v=>`<tr><td colspan="3" style="color:var(--text2)">Thuế GTGT (${v.rate}%)</td><td style="text-align:right;color:var(--text2)">${fm(v.amount,'VND')}</td></tr>`).join('')
+      : `<tr><td colspan="3" style="color:var(--text2)">Thuế GTGT (${cpq.vatPct||8}%)</td><td style="text-align:right;color:var(--text2)">${fm(Math.round(calc.totalBefore*(cpq.vatPct||8)/100),'VND')}</td></tr>`);
+  }
   // Update group totals
   calc.groups.forEach(g=>{
     const gel = document.querySelector(`#pqg-${g.id} .pq-card-title span:last-child`);
@@ -3564,11 +3615,19 @@ function exportProjectPDF(id){
       const modelTxt=model?model[1].trim():'';
       const desc=(it.specs||'').replace(/^\s*Model\s*[:：]\s*.+?(\n|$)/i,'').trim();
       const name=(it.name||'').split('\n')[0];
+      const cat=findCatalogMatch(it);
+      const img=(cat&&cat.image)?cat.image:'';
+      const details=`
+        ${modelTxt?`<div class="apx-f"><div class="apx-k">Model</div><div class="apx-v">${esc(modelTxt)}</div></div>`:''}
+        ${it.code?`<div class="apx-f"><div class="apx-k">Mã hàng</div><div class="apx-v">${esc(it.code)}</div></div>`:''}
+        ${desc?`<div class="apx-f"><div class="apx-k">Mô tả chi tiết</div><div class="apx-v">${esc(desc).replace(/\n/g,'<br>')}</div></div>`:''}
+        ${it.brand?`<div class="apx-f"><div class="apx-k">Hãng SX - Xuất xứ</div><div class="apx-v">${esc(it.brand)}</div></div>`:''}`;
       return `<div class="apx-item">
         <div class="apx-name">${idx+1}. ${esc(name)}</div>
-        ${modelTxt?`<div class="apx-f"><div class="apx-k">Model</div><div class="apx-v">${esc(modelTxt)}</div></div>`:''}
-        ${desc?`<div class="apx-f"><div class="apx-k">Mô tả chi tiết</div><div class="apx-v">${esc(desc).replace(/\n/g,'<br>')}</div></div>`:''}
-        ${it.brand?`<div class="apx-f"><div class="apx-k">Hãng SX - Xuất xứ</div><div class="apx-v">${esc(it.brand)}</div></div>`:''}
+        <div class="apx-body${img?' has-img':''}">
+          ${img?`<div class="apx-img-wrap"><img class="apx-img" src="${img}" alt=""></div>`:''}
+          <div class="apx-fields">${details}</div>
+        </div>
       </div>`;
     }).join('')}
   </div>` : '';
@@ -3648,8 +3707,13 @@ function exportProjectPDF(id){
   .apx-title{font-size:13pt;font-weight:600;color:var(--pc);margin-bottom:3px;text-align:center;}
   .apx-sub{font-size:9pt;color:#41505f;margin-bottom:15px;text-align:center;}
   .apx-item{background:#fafbfc;border:1px solid #e4e9ee;border-radius:9px;padding:13px 16px;margin-bottom:11px;}
-  .apx-name{font-size:11pt;font-weight:600;color:#1c2530;margin-bottom:7px;}
-  .apx-f{display:grid;grid-template-columns:145px 1fr;gap:12px;padding:3px 0;font-size:9.5pt;line-height:1.6;}
+  .apx-name{font-size:11pt;font-weight:600;color:#1c2530;margin-bottom:7px;padding-bottom:6px;border-bottom:1px solid #eef1f4;}
+  .apx-body{display:block;}
+  .apx-body.has-img{display:flex;gap:16px;align-items:flex-start;}
+  .apx-img-wrap{flex-shrink:0;width:130px;height:130px;background:#fff;border:1px solid #e4e9ee;border-radius:8px;display:flex;align-items:center;justify-content:center;overflow:hidden;}
+  .apx-img{max-width:100%;max-height:100%;object-fit:contain;}
+  .apx-fields{flex:1;min-width:0;}
+  .apx-f{display:grid;grid-template-columns:130px 1fr;gap:10px;padding:2.5px 0;font-size:9pt;line-height:1.55;}
   .apx-k{color:#41505f;font-weight:600;}
   .apx-v{color:#1c2530;white-space:pre-line;}
   .footer-note{text-align:center;font-size:8pt;color:#95a1ac;margin-top:16px;padding-top:10px;border-top:1px solid #e4e9ee;}
@@ -3715,7 +3779,9 @@ function exportProjectPDF(id){
 
   <div class="qtots"><div class="qti">
     <div class="qtr"><span class="tl">Tổng giá trước thuế</span><span>${money(calc.totalBefore)}</span></div>
-    <div class="qtr"><span class="tl">Thuế VAT (${vat}%)</span><span>${money(vatAmount)}</span></div>
+    ${(calc.vatBreakdown&&calc.vatBreakdown.length)
+      ? calc.vatBreakdown.map(v=>`<div class="qtr"><span class="tl">Thuế VAT (${v.rate}%)</span><span>${money(v.amount)}</span></div>`).join('')
+      : `<div class="qtr"><span class="tl">Thuế VAT (${vat}%)</span><span>${money(vatAmount)}</span></div>`}
     <div class="qtr grand"><span class="tl">Tổng giá sau thuế</span><span>${money(calc.totalAfter)}</span></div>
   </div></div>
 
@@ -5860,6 +5926,18 @@ function buildItemRow(it,idx,cur){
   value="${it.price>0?it.price.toLocaleString('vi-VN'):''}" placeholder="0"
   oninput="const n=formatMoney(this);si(${it.id},'price',n);const _e=document.getElementById('it-'+${it.id});if(_e)_e.textContent=fm(n*(cq.items.find(x=>x.id===${it.id})?.qty||1),cq.currency||'VND');const _t=document.getElementById('totbox');if(_t)_t.innerHTML=buildTH(ct(cq.items,cq.discPct,cq.vatPct),cq)"
   onfocus="this.select()"></td>
+    <td style="text-align:center">
+      <select class="ii" id="ivat-${it.id}" style="width:64px;text-align:center;padding:5px 2px"
+        onchange="siVat(${it.id},this.value)">
+        ${[
+          {v:'',l:`Chung`},
+          {v:'0',l:'0%'},
+          {v:'5',l:'5%'},
+          {v:'8',l:'8%'},
+          {v:'10',l:'10%'},
+        ].map(o=>`<option value="${o.v}"${String(it.vatPct??'')===o.v?' selected':''}>${o.l}</option>`).join('')}
+      </select>
+    </td>
     <td style="text-align:right;font-weight:700;color:var(--accent2);padding-right:8px;min-width:110px" id="it-${it.id}">${fm(it.qty*it.price,cur)}</td>
     <td style="width:30px"><button class="db" onclick="di(${it.id})">✕</button></td>
   </tr>`;
@@ -6936,9 +7014,14 @@ body{font-family:Arial,Helvetica,'Segoe UI',sans-serif;font-size:10.5pt;font-wei
 .apx{margin-top:26px;border-top:2.5px solid var(--pc);padding-top:18px;}
 .apx-title{font-size:14pt;font-weight:600;color:var(--pc);letter-spacing:.3px;margin-bottom:3px;text-align:center;}
 .apx-sub{font-size:9.5pt;color:#41505f;margin-bottom:16px;text-align:center;}
-.apx-item{background:#fafbfc;border:1px solid #e4e9ee;border-radius:9px;padding:14px 18px;margin-bottom:12px;}
-.apx-name{font-size:11.5pt;font-weight:600;color:#1c2530;margin-bottom:8px;}
-.apx-f{display:grid;grid-template-columns:145px 1fr;gap:12px;padding:3px 0;font-size:10pt;line-height:1.65;}
+.apx-item{background:#fafbfc;border:1px solid #e4e9ee;border-radius:9px;padding:13px 16px;margin-bottom:11px;}
+.apx-name{font-size:11pt;font-weight:600;color:#1c2530;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid #eef1f4;}
+.apx-body{display:block;}
+.apx-body.has-img{display:flex;gap:16px;align-items:flex-start;}
+.apx-img-wrap{flex-shrink:0;width:140px;height:140px;background:#fff;border:1px solid #e4e9ee;border-radius:8px;display:flex;align-items:center;justify-content:center;overflow:hidden;}
+.apx-img{max-width:100%;max-height:100%;object-fit:contain;}
+.apx-fields{flex:1;min-width:0;}
+.apx-f{display:grid;grid-template-columns:130px 1fr;gap:10px;padding:2.5px 0;font-size:9pt;line-height:1.55;}
 .apx-k{color:#41505f;font-weight:700;}
 .apx-v{color:#1c2530;white-space:pre-line;}
 
@@ -7058,12 +7141,19 @@ function buildHTML(q,co,forPrint){
       const model=extractModel(it);
       const desc=(it.specs||'').replace(/^\s*Model\s*[:：]\s*.+?(\n|$)/i,'').trim();
       const name=(it.name||'').split('\n')[0];
-      return `<div class="apx-item">
-        <div class="apx-name">${idx+1}. ${esc(name)}</div>
+      const cat=findCatalogMatch(it);
+      const img=(cat&&cat.image)?cat.image:'';
+      const details=`
         ${model?`<div class="apx-f"><div class="apx-k">Model</div><div class="apx-v">${esc(model)}</div></div>`:''}
         ${it.code?`<div class="apx-f"><div class="apx-k">Mã hàng</div><div class="apx-v">${esc(it.code)}</div></div>`:''}
         ${desc?`<div class="apx-f"><div class="apx-k">Mô tả chi tiết</div><div class="apx-v">${esc(desc).replace(/\n/g,'<br>')}</div></div>`:''}
-        ${it.brand?`<div class="apx-f"><div class="apx-k">Hãng SX - Xuất xứ</div><div class="apx-v">${esc(it.brand)}</div></div>`:''}
+        ${it.brand?`<div class="apx-f"><div class="apx-k">Hãng SX - Xuất xứ</div><div class="apx-v">${esc(it.brand)}</div></div>`:''}`;
+      return `<div class="apx-item">
+        <div class="apx-name">${idx+1}. ${esc(name)}</div>
+        <div class="apx-body${img?' has-img':''}">
+          ${img?`<div class="apx-img-wrap"><img class="apx-img" src="${img}" alt=""></div>`:''}
+          <div class="apx-fields">${details}</div>
+        </div>
       </div>`;
     }).join('')}
   </div>` : '';
@@ -7126,7 +7216,9 @@ function buildHTML(q,co,forPrint){
   <div class="qtots"><div class="qti">
     <div class="qtr"><span class="tl">Tổng giá trước thuế</span><span>${fm(t.sub,cur)}</span></div>
     ${t.da>0?`<div class="qtr"><span class="tl">Chiết khấu (${q.discPct}%)</span><span>-${fm(t.da,cur)}</span></div>`:''}
-    ${q.vatPct>0?`<div class="qtr"><span class="tl">Thuế VAT (${q.vatPct}%)</span><span>${fm(t.va,cur)}</span></div>`:''}
+    ${(t.vatBreakdown&&t.vatBreakdown.length)
+      ? t.vatBreakdown.map(v=>`<div class="qtr"><span class="tl">Thuế VAT (${v.rate}%)</span><span>${fm(v.amount,cur)}</span></div>`).join('')
+      : (q.vatPct>0?`<div class="qtr"><span class="tl">Thuế VAT (${q.vatPct}%)</span><span>${fm(t.va,cur)}</span></div>`:'')}
     <div class="qtr grand"><span class="tl">Tổng giá sau thuế</span><span>${fm(t.grand,cur)}</span></div>
   </div></div>
 
@@ -7821,10 +7913,14 @@ function exportQuoteXLSX(){
     R++;
   };
 
-  addSubRow('Tạm tính:',t.sub);
+  addSubRow('Tổng giá trước thuế:',t.sub);
   if(q.discPct>0)addSubRow(`Chiết khấu (${q.discPct}%):`,-(t.da));
-  if(q.vatPct>0)addSubRow(`Thuế VAT (${q.vatPct}%):`,t.va);
-  addSubRow('TỔNG CỘNG:',t.grand,true);
+  if(t.vatBreakdown && t.vatBreakdown.length){
+    t.vatBreakdown.forEach(v=>addSubRow(`Thuế VAT (${v.rate}%):`,v.amount));
+  } else if(q.vatPct>0){
+    addSubRow(`Thuế VAT (${q.vatPct}%):`,t.va);
+  }
+  addSubRow('Tổng giá sau thuế:',t.grand,true);
 
   R++; // spacer
 
