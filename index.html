@@ -1479,21 +1479,27 @@ function loginUser(user,name){
       if(!token) return; // chưa kết nối Drive → bỏ qua
       gdLoadUserData(user).then(cloudData => {
         if(!cloudData){ sbAutoSync(); return; }
+        // MÔ HÌNH DÙNG CHUNG: dữ liệu trên Drive là kho chung của cả công ty.
+        // Khi đăng nhập, luôn tải về để thấy dữ liệu mới nhất mọi người đã nhập.
         const cloudQs  = cloudData.qs  || [];
         const localQs  = quotes;
-        const cloudHasMore = cloudQs.length > localQs.length;
-        const cloudNewer   = cloudQs.length > 0 && localQs.length === 0;
-        if(cloudHasMore || cloudNewer){
+        // Nếu local đang có nhiều hơn cloud (vừa nhập offline chưa kịp sync) thì đẩy lên,
+        // ngược lại luôn lấy bản cloud làm chuẩn.
+        if(localQs.length > cloudQs.length && cloudQs.length===0){
+          sbAutoSync(); return;
+        }
+        {
           quotes  = cloudQs;
+          if(cloudData.pqs) projects = cloudData.pqs;
           company = (cloudData.co && Object.keys(cloudData.co).length > 0) ? cloudData.co : company;
-          catalog = cloudData.cat?.length > 0 ? cloudData.cat : catalog;
-          customers = cloudData.cust?.length > 0 ? cloudData.cust : customers;
-          suppliers = cloudData.sup?.length > 0 ? cloudData.sup : suppliers;
-          templates = cloudData.tpl?.length > 0 ? cloudData.tpl : templates;
-          auditLog = cloudData.log?.length > 0 ? cloudData.log : auditLog;
-          priceHistory = cloudData.ph?.length > 0 ? cloudData.ph : priceHistory;
+          catalog = cloudData.cat || catalog;
+          customers = cloudData.cust || customers;
+          suppliers = cloudData.sup || suppliers;
+          templates = cloudData.tpl || templates;
+          auditLog = cloudData.log || auditLog;
+          priceHistory = cloudData.ph || priceHistory;
           if(cloudData.calc) calcState = {...calcState, ...cloudData.calc};
-          ULS.set('qs', quotes); ULS.set('co', company);
+          ULS.set('qs', quotes); ULS.set('pqs', projects); ULS.set('co', company);
           ULS.set('cat', catalog); ULS.set('cust', customers);
           ULS.set('sup', suppliers); ULS.set('tpl', templates);
           ULS.set('log', auditLog); ULS.set('ph', priceHistory);
@@ -1501,9 +1507,7 @@ function loginUser(user,name){
           updateSB();
           const ce = document.getElementById('content');
           if(ce) goPage('dashboard');
-          toast('Đồng bộ từ Drive','success', cloudQs.length+' báo giá');
-        } else if(localQs.length > cloudQs.length){
-          sbAutoSync();
+          toast('Đồng bộ dữ liệu chung','success', cloudQs.length+' báo giá');
         }
       }).catch(e=>{ console.warn('Drive load error:', e); });
     });
@@ -2115,7 +2119,7 @@ function fDash(){
     const t=ct(q.items,q.discPct,q.vatPct);
     return`<tr class="cr" onclick="openQ(${q.id})">
       <td style="font-weight:700;color:var(--accent2)">${esc(q.num)}${q.rev>0?` <span style="font-size:9.5px;font-weight:700;color:var(--muted);background:var(--bg2);padding:1px 6px;border-radius:10px">Rev.${q.rev}</span>`:''}</td>
-      <td>${esc(q.clientName)||'<span style="color:var(--muted)">—</span>'}</td>
+      <td>${esc(q.clientName)||'<span style="color:var(--muted)">—</span>'}${q.createdBy?`<div style="font-size:10.5px;color:var(--text3);margin-top:2px">👤 ${esc(q.createdBy)}</div>`:''}</td>
       <td style="color:var(--text2);font-size:12px">${q.date||'—'}</td>
       <td style="color:var(--text2);font-size:12px">${esc(q.deliveryLocation)||'—'}</td>
       <td style="font-weight:700">${fm(t.grand,q.currency)}</td>
@@ -2787,9 +2791,13 @@ async function gdWriteFile(name, data, existingId = null) {
 
 let _gdFileIds = {};
 
+// ── KHO DỮ LIỆU DÙNG CHUNG TOÀN CÔNG TY ───────────────────────
+// Tất cả tài khoản đọc/ghi cùng 1 file 'data_shared.json' trên Drive công ty,
+// nên báo giá / khách hàng / danh mục / NCC / dự án / báo cáo đều thấy của nhau.
+const SHARED_DATA_FILE = 'data_shared.json';
+
 async function gdLoadUserData(email) {
-  if (!email || email === '__guest__') return null;
-  const safeName = 'data_' + email.replace(/[^a-z0-9]/gi, '_') + '.json';
+  const safeName = SHARED_DATA_FILE;
   const file = await gdFindFile(safeName);
   if (!file) return null;
   _gdFileIds[safeName] = file.id;
@@ -2797,10 +2805,9 @@ async function gdLoadUserData(email) {
 }
 
 async function gdSaveUserData(email, dataObj) {
-  if (!email || email === '__guest__') return;
   const token = await gdGetToken();
   if (!token) return;
-  const safeName = 'data_' + email.replace(/[^a-z0-9]/gi, '_') + '.json';
+  const safeName = SHARED_DATA_FILE;
   const existingId = _gdFileIds[safeName] || null;
   const result = await gdWriteFile(safeName, dataObj, existingId);
   if (result?.id) _gdFileIds[safeName] = result.id;
@@ -2915,31 +2922,32 @@ async function sbInit() {
   const cloudData = await gdLoadUserData(currentUser);
   if (!cloudData) { sbAutoSync(); return; }
   let changed = false;
-  if ((cloudData.qs?.length || 0) > quotes.length) {
-    quotes = cloudData.qs; ULS.set('qs', quotes); changed = true;
+  // MÔ HÌNH DÙNG CHUNG: ưu tiên lấy dữ liệu chung từ Drive (nếu có nội dung).
+  if (Array.isArray(cloudData.qs)) {
+    if (cloudData.qs.length >= quotes.length || quotes.length===0) { quotes = cloudData.qs; ULS.set('qs', quotes); changed = true; }
   }
   if (cloudData.co && Object.keys(cloudData.co).length > 0) {
     company = { ...company, ...cloudData.co }; ULS.set('co', company); changed = true;
   }
-  if ((cloudData.cat?.length || 0) > catalog.length) {
+  if (Array.isArray(cloudData.cat) && (cloudData.cat.length >= catalog.length || catalog.length===0)) {
     catalog = cloudData.cat; ULS.set('cat', catalog); changed = true;
   }
-  if ((cloudData.pqs?.length || 0) > (projects?.length || 0)) {
+  if (Array.isArray(cloudData.pqs) && (cloudData.pqs.length >= (projects?.length||0) || (projects?.length||0)===0)) {
     projects = cloudData.pqs; ULS.set('pqs', projects); changed = true;
   }
-  if ((cloudData.cust?.length || 0) > customers.length) {
+  if (Array.isArray(cloudData.cust) && (cloudData.cust.length >= customers.length || customers.length===0)) {
     customers = cloudData.cust; ULS.set('cust', customers); changed = true;
   }
-  if ((cloudData.sup?.length || 0) > suppliers.length) {
+  if (Array.isArray(cloudData.sup) && (cloudData.sup.length >= suppliers.length || suppliers.length===0)) {
     suppliers = cloudData.sup; ULS.set('sup', suppliers); changed = true;
   }
-  if ((cloudData.tpl?.length || 0) > templates.length) {
+  if (Array.isArray(cloudData.tpl) && (cloudData.tpl.length >= templates.length || templates.length===0)) {
     templates = cloudData.tpl; ULS.set('tpl', templates); changed = true;
   }
-  if ((cloudData.log?.length || 0) > auditLog.length) {
+  if (Array.isArray(cloudData.log) && (cloudData.log.length >= auditLog.length || auditLog.length===0)) {
     auditLog = cloudData.log; ULS.set('log', auditLog);
   }
-  if ((cloudData.ph?.length || 0) > priceHistory.length) {
+  if (Array.isArray(cloudData.ph) && (cloudData.ph.length >= priceHistory.length || priceHistory.length===0)) {
     priceHistory = cloudData.ph; ULS.set('ph', priceHistory); changed = true;
   }
   if (changed) {
@@ -2948,7 +2956,7 @@ async function sbInit() {
     else if (currentPage === 'catalog') goPage('catalog');
     else if (currentPage === 'customers') goPage('customers');
     else if (currentPage === 'suppliers') goPage('suppliers');
-    toast('Đã đồng bộ từ Drive', 'success', quotes.length + ' báo giá');
+    toast('Đã đồng bộ dữ liệu chung', 'success', quotes.length + ' báo giá');
   } else {
     sbAutoSync();
   }
