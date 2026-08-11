@@ -6350,6 +6350,23 @@ function renderSettings(el){
     </div>
     <button class="btn btn-p" style="font-size:14px;padding:10px 26px" onclick="saveCo()">💾 Lưu thông tin công ty</button>
 
+    <div class="card" style="margin-top:14px">
+      <div class="card-title">🔄 Sao lưu & Gộp dữ liệu</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px;line-height:1.6">
+        Dùng để <b>gộp dữ liệu cũ vào kho chung</b> hoặc sao lưu.<br>
+        • <b>Xuất dữ liệu</b>: tải toàn bộ báo giá, khách hàng, danh mục, NCC, dự án, lịch sử giá ra 1 file.<br>
+        • <b>Nhập &amp; gộp</b>: chọn file đã xuất, dữ liệu sẽ được <b>gộp thêm</b> vào kho hiện tại (không xoá dữ liệu đang có, mục trùng sẽ bỏ qua).
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button class="btn btn-g" onclick="exportAllData()">📤 Xuất dữ liệu (sao lưu)</button>
+        <input type="file" id="import-data-file" accept=".json" style="display:none" onchange="importAndMergeData(this)">
+        <button class="btn btn-p" onclick="document.getElementById('import-data-file').click()">📥 Nhập &amp; gộp dữ liệu</button>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:10px;line-height:1.6">
+        💡 <b>Cách gộp dữ liệu cũ:</b> Đăng nhập app bằng cấu hình cũ (Gmail cá nhân) → bấm <b>Xuất dữ liệu</b> để lấy file. Sau đó chuyển sang kho chung (sales@kienthinh-eco.com) → bấm <b>Nhập &amp; gộp</b> chọn file đó. Làm cho từng người là gộp xong.
+      </div>
+    </div>
+
 
     ${currentUser===ADMIN_EMAIL?`
     <!-- Quản lý tài khoản (chỉ admin) -->
@@ -6774,6 +6791,104 @@ function handleLogo(inp){
     toast('Đã lưu logo','success');
   };
   r.readAsDataURL(inp.files[0]);
+}
+
+// ── XUẤT / NHẬP & GỘP DỮ LIỆU (để gộp dữ liệu cũ vào kho chung) ──
+function exportAllData(){
+  const payload={
+    _type:'kienthinh-quote-backup',
+    _version:'4.0',
+    _exportedAt:new Date().toISOString(),
+    _exportedBy:currentUser||'',
+    qs:   quotes||[],
+    pqs:  projects||[],
+    co:   company||{},
+    cat:  catalog||[],
+    cust: customers||[],
+    sup:  suppliers||[],
+    tpl:  templates||[],
+    ph:   priceHistory||[],
+    calc: calcState||null,
+  };
+  const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  a.download=`KienThinh_Backup_${(currentUser||'data').replace(/[^a-z0-9]/gi,'_')}_${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('Đã xuất dữ liệu','success', (quotes?.length||0)+' báo giá');
+}
+
+function importAndMergeData(inp){
+  const file=inp.files[0];
+  if(!file)return;
+  const reader=new FileReader();
+  reader.onload=e=>{
+    let data;
+    try{ data=JSON.parse(e.target.result); }
+    catch(err){ toast('File không hợp lệ','error'); inp.value=''; return; }
+    if(!data || (data._type && data._type!=='kienthinh-quote-backup')){
+      if(!confirm('File này có thể không phải bản sao lưu của phần mềm. Vẫn thử gộp?')){ inp.value=''; return; }
+    }
+    // Gộp theo id/mã, không ghi đè mục đang có
+    const merged={qs:0,pqs:0,cat:0,cust:0,sup:0,ph:0,tpl:0};
+
+    // Báo giá — gộp theo id (hoặc num nếu thiếu id)
+    if(Array.isArray(data.qs)){
+      const seen=new Set(quotes.map(q=>q.id||q.num));
+      data.qs.forEach(q=>{ const k=q.id||q.num; if(k && !seen.has(k)){ quotes.push(q); seen.add(k); merged.qs++; } });
+    }
+    // Báo giá dự án
+    if(Array.isArray(data.pqs)){
+      const seen=new Set((projects||[]).map(p=>p.id||p.num));
+      data.pqs.forEach(p=>{ const k=p.id||p.num; if(k && !seen.has(k)){ projects.push(p); seen.add(k); merged.pqs++; } });
+    }
+    // Danh mục — gộp theo mã (code)
+    if(Array.isArray(data.cat)){
+      const seen=new Set(catalog.map(c=>stripVN(c.code||c.name||'')));
+      data.cat.forEach(c=>{ const k=stripVN(c.code||c.name||''); if(k && !seen.has(k)){ catalog.push(c); seen.add(k); merged.cat++; } });
+    }
+    // Khách hàng — gộp theo tên+sđt
+    if(Array.isArray(data.cust)){
+      const seen=new Set(customers.map(c=>stripVN((c.name||'')+(c.phone||''))));
+      data.cust.forEach(c=>{ const k=stripVN((c.name||'')+(c.phone||'')); if(k && !seen.has(k)){ customers.push(c); seen.add(k); merged.cust++; } });
+    }
+    // Nhà cung cấp — gộp theo tên
+    if(Array.isArray(data.sup)){
+      const seen=new Set(suppliers.map(s=>stripVN(s.name||'')));
+      data.sup.forEach(s=>{ const k=stripVN(s.name||''); if(k && !seen.has(k)){ suppliers.push(s); seen.add(k); merged.sup++; } });
+    }
+    // Lịch sử giá đầu vào — gộp theo id
+    if(Array.isArray(data.ph)){
+      const seen=new Set((priceHistory||[]).map(o=>o.id));
+      data.ph.forEach(o=>{ if(o.id && !seen.has(o.id)){ priceHistory.push(o); seen.add(o.id); merged.ph++; } });
+    }
+    // Mẫu (templates) — gộp theo id/tên
+    if(Array.isArray(data.tpl)){
+      const seen=new Set((templates||[]).map(t=>t.id||t.name));
+      data.tpl.forEach(t=>{ const k=t.id||t.name; if(k && !seen.has(k)){ templates.push(t); seen.add(k); merged.tpl++; } });
+    }
+
+    // Lưu lại + đồng bộ lên kho chung
+    ULS.set('qs',quotes); ULS.set('pqs',projects); ULS.set('cat',catalog);
+    ULS.set('cust',customers); ULS.set('sup',suppliers); ULS.set('ph',priceHistory);
+    ULS.set('tpl',templates);
+    sbAutoSync();
+    inp.value='';
+
+    const total=Object.values(merged).reduce((a,b)=>a+b,0);
+    const detail=`Báo giá: ${merged.qs} · Dự án: ${merged.pqs} · Danh mục: ${merged.cat} · KH: ${merged.cust} · NCC: ${merged.sup} · Lịch sử giá: ${merged.ph}`;
+    if(total===0){
+      toast('Không có mục mới để gộp','warning','Tất cả đã có trong kho');
+    }else{
+      toast('Đã gộp '+total+' mục mới','success',detail);
+    }
+    logAction('Gộp dữ liệu', 'Import '+total+' mục', detail);
+    updateSB();
+    goPage('dashboard');
+  };
+  reader.readAsText(file);
 }
 
 // ── CHỮ KÝ ─────────────────────────────────────────────────────
