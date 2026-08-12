@@ -1498,11 +1498,12 @@ function loginUser(user,name){
           templates = cloudData.tpl || templates;
           auditLog = cloudData.log || auditLog;
           priceHistory = cloudData.ph || priceHistory;
+          outContracts = cloudData.oc || outContracts;
           if(cloudData.calc) calcState = {...calcState, ...cloudData.calc};
           ULS.set('qs', quotes); ULS.set('pqs', projects); ULS.set('co', company);
           ULS.set('cat', catalog); ULS.set('cust', customers);
           ULS.set('sup', suppliers); ULS.set('tpl', templates);
-          ULS.set('log', auditLog); ULS.set('ph', priceHistory);
+          ULS.set('log', auditLog); ULS.set('ph', priceHistory); ULS.set('oc', outContracts);
           if(cloudData.calc) ULS.set('calc', calcState);
           updateSB();
           const ce = document.getElementById('content');
@@ -1669,7 +1670,7 @@ window.addEventListener('DOMContentLoaded',()=>{
 });
 
 // ── STORAGE (see above for LS definition) ───────────────────
-const KEYS={co:'co',qs:'qs',cat:'cat',calc:'calc',cust:'cust',sup:'sup',tpl:'tpl',log:'log',ph:'ph'};
+const KEYS={co:'co',qs:'qs',cat:'cat',calc:'calc',cust:'cust',sup:'sup',tpl:'tpl',log:'log',ph:'ph',oc:'oc'};
 
 // ── CONSTANTS ───────────────────────────────────────────────
 const CURR={
@@ -1784,6 +1785,7 @@ let suppliers=ULS.get(KEYS.sup)||[]; // [{id,code,name,contactName,email,phone,w
 let templates=ULS.get(KEYS.tpl)||[]; // [{id,name,description,items:[...],createdAt}]
 let auditLog=ULS.get(KEYS.log)||[]; // [{id,time,user,action,target,detail}] — chỉ lưu tối đa 500 dòng gần nhất
 let priceHistory=ULS.get(KEYS.ph)||[]; // [{id,itemName,itemCode,supplierId,supplierName,price,currency,qty,date,note,createdBy,createdAt}] — lịch sử giá đầu vào (giá mua)
+let outContracts=ULS.get('oc')||[]; // [{id,customerName,contractNo,date,note,items:[{name,code,qty,buyPrice,sellPrice,currency,project}],createdBy,createdAt}] — hợp đồng đầu ra (bán cho KH)
 let cq=null; // current quote being edited
 
 const bq=()=>({
@@ -2950,6 +2952,9 @@ async function sbInit() {
   if (Array.isArray(cloudData.ph) && (cloudData.ph.length >= priceHistory.length || priceHistory.length===0)) {
     priceHistory = cloudData.ph; ULS.set('ph', priceHistory); changed = true;
   }
+  if (Array.isArray(cloudData.oc) && (cloudData.oc.length >= outContracts.length || outContracts.length===0)) {
+    outContracts = cloudData.oc; ULS.set('oc', outContracts); changed = true;
+  }
   if (changed) {
     updateSB();
     if (currentPage === 'dashboard') goPage('dashboard');
@@ -2977,6 +2982,7 @@ function sbAutoSync() {
       tpl:  ULS.get('tpl')  || [],
       log:  ULS.get('log')  || [],
       ph:   ULS.get('ph')   || [],
+      oc:   ULS.get('oc')   || [],
     };
     await gdSaveUserData(currentUser, dataObj);
   }, 3000);
@@ -4725,7 +4731,20 @@ function custQuoteStats(custId, custName){
   return { list, count:list.length, totalValue, acceptedValue, lastDate: list[0]?.date||null };
 }
 
+let _custTab = 'list'; // 'list' | 'contract'
 function renderCustomers(el){
+  el.innerHTML = `
+    <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
+      <button class="btn ${_custTab==='list'?'btn-p':'btn-g'}" onclick="_custTab='list';renderCustomers(document.getElementById('content'))">👥 Khách hàng</button>
+      <button class="btn ${_custTab==='contract'?'btn-p':'btn-g'}" onclick="_custTab='contract';renderCustomers(document.getElementById('content'))">📑 Hợp đồng đầu ra</button>
+    </div>
+    <div id="cust-tab-body"></div>`;
+  const body = document.getElementById('cust-tab-body');
+  if(_custTab==='contract'){ renderOutContracts(body); return; }
+  renderCustomerList(body);
+}
+
+function renderCustomerList(el){
   const total=customers.length;
   const groups=[...new Set(customers.map(c=>c.group).filter(Boolean))].length;
   el.innerHTML=`
@@ -4763,6 +4782,255 @@ function renderCustomers(el){
     </div>`}
   </div>`;
   if(total)renderCustTable('');
+}
+
+// ── HỢP ĐỒNG ĐẦU RA (bán cho khách hàng) ──────────────────────
+// Schema: {id, customerName, contractNo, date, note, items:[{name,code,qty,buyPrice,sellPrice,currency,project}], createdBy, createdAt}
+let _ocSearch = '';
+function ocMoney(n,cur){ const s=Math.round(n||0).toLocaleString('vi-VN'); return s+(cur==='USD'?' $':cur==='EUR'?' €':' ₫'); }
+function ocDate(iso){ if(!iso)return''; try{return new Date(iso).toLocaleDateString('vi-VN');}catch(e){return iso;} }
+// Tổng mua / bán / lãi 1 hợp đồng (cùng tiền tệ chủ đạo)
+function ocTotals(c){
+  const items=c.items||[];
+  const curCount={}; items.forEach(it=>{const cu=it.currency||'VND';curCount[cu]=(curCount[cu]||0)+1;});
+  const cur=Object.entries(curCount).sort((a,b)=>b[1]-a[1])[0]?.[0]||'VND';
+  const same=items.filter(it=>(it.currency||'VND')===cur);
+  const buy=same.reduce((s,it)=>s+(it.buyPrice||0)*(it.qty||1),0);
+  const sell=same.reduce((s,it)=>s+(it.sellPrice||0)*(it.qty||1),0);
+  return {buy, sell, profit:sell-buy, margin:sell>0?(sell-buy)/sell*100:0, cur};
+}
+
+function renderOutContracts(el){
+  const kw=stripVN(_ocSearch||'');
+  const list = kw ? outContracts.filter(c=>
+    stripVN(c.customerName||'').includes(kw) || stripVN(c.contractNo||'').includes(kw) ||
+    (c.items||[]).some(it=>stripVN(it.name||'').includes(kw)||stripVN(it.code||'').includes(kw)||stripVN(it.project||'').includes(kw))
+  ) : outContracts;
+  const sorted=[...list].sort((a,b)=>new Date(b.date||b.createdAt||0)-new Date(a.date||a.createdAt||0));
+  const totalC=outContracts.length;
+  const totalItems=outContracts.reduce((s,c)=>s+(c.items?.length||0),0);
+  // Tổng lãi tất cả HĐ (chỉ cộng VND cho gọn)
+  let grandProfit=0, grandSell=0;
+  outContracts.forEach(c=>{ const t=ocTotals(c); if(t.cur==='VND'){grandProfit+=t.profit;grandSell+=t.sell;} });
+
+  el.innerHTML=`
+  <div class="card">
+    <div class="card-title">📑 Hợp đồng đầu ra</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Mỗi bản ghi là một <b>hợp đồng bán cho khách hàng</b>. Quản lý giá mua vào &amp; giá bán ra từng mặt hàng, hàng cấp cho dự án nào, và lợi nhuận.</div>
+    <div class="abar" style="margin-bottom:12px">
+      <button class="btn btn-p" onclick="openOCModal()">➕ Tạo hợp đồng</button>
+      <input class="inp" id="oc-q" value="${esc(_ocSearch)}" placeholder="🔍  Tìm theo khách hàng, số HĐ, tên/mã hàng, dự án..." oninput="_ocSearch=this.value;renderOutContracts(document.getElementById('cust-tab-body'))" style="max-width:380px;flex:1">
+      ${totalC?`<button class="btn btn-g" onclick="exportOCExcel()">📤 Export Excel</button>`:''}
+    </div>
+    ${totalC?`<div class="cat-stats">
+      <div class="cat-stat"><b>${totalC}</b>Hợp đồng</div>
+      <div class="cat-stat"><b>${totalItems}</b>Dòng hàng</div>
+      <div class="cat-stat"><b>${grandProfit.toLocaleString('vi-VN')} ₫</b>Tổng lãi (VND)</div>
+    </div>`:''}
+    ${sorted.length?`
+    <div style="display:flex;flex-direction:column;gap:12px;margin-top:6px">
+      ${sorted.map(c=>{
+        const t=ocTotals(c);
+        const mc=t.margin>=15?'#3B6D11':t.margin>=0?'#185FA5':'#A32D2D';
+        return `<div class="pq-list-card" style="cursor:default">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap">
+            <div style="flex:1;min-width:220px">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap">
+                <span style="font-size:14px;font-weight:700;color:var(--text)">🏢 ${esc(c.customerName||'(Chưa rõ khách hàng)')}</span>
+                ${c.contractNo?`<span style="font-size:11px;font-weight:700;color:var(--accent2);background:var(--bg2);padding:2px 8px;border-radius:20px">${esc(c.contractNo)}</span>`:''}
+              </div>
+              <div style="font-size:11px;color:var(--text3);margin-bottom:8px">📅 ${ocDate(c.date||c.createdAt)} · ${c.items.length} mặt hàng${c.note?' · 📝 '+esc(c.note):''}</div>
+              <div style="border:1px solid var(--border);border-radius:8px;overflow:auto">
+                <table style="width:100%;border-collapse:collapse;font-size:12px;min-width:560px">
+                  <thead><tr>
+                    <th style="background:var(--bg2);color:var(--text3);padding:6px 9px;text-align:left;font-size:10px;text-transform:uppercase">Tên hàng</th>
+                    <th style="background:var(--bg2);color:var(--text3);padding:6px 9px;text-align:left;font-size:10px;text-transform:uppercase">Mã</th>
+                    <th style="background:var(--bg2);color:var(--text3);padding:6px 9px;text-align:center;font-size:10px;text-transform:uppercase">SL</th>
+                    <th style="background:var(--bg2);color:var(--text3);padding:6px 9px;text-align:right;font-size:10px;text-transform:uppercase">Giá mua</th>
+                    <th style="background:var(--bg2);color:var(--text3);padding:6px 9px;text-align:right;font-size:10px;text-transform:uppercase">Giá bán</th>
+                    <th style="background:var(--bg2);color:var(--text3);padding:6px 9px;text-align:right;font-size:10px;text-transform:uppercase">Lãi</th>
+                    <th style="background:var(--bg2);color:var(--text3);padding:6px 9px;text-align:left;font-size:10px;text-transform:uppercase">Dự án</th>
+                  </tr></thead>
+                  <tbody>${c.items.map(it=>{
+                    const lineProfit=((it.sellPrice||0)-(it.buyPrice||0))*(it.qty||1);
+                    return `<tr>
+                    <td style="padding:6px 9px;border-top:1px solid var(--border);font-weight:600">${esc(it.name||'')}</td>
+                    <td style="padding:6px 9px;border-top:1px solid var(--border);color:var(--accent2);font-weight:600">${esc(it.code||'')}</td>
+                    <td style="padding:6px 9px;border-top:1px solid var(--border);text-align:center;color:var(--text2)">${it.qty||1}</td>
+                    <td style="padding:6px 9px;border-top:1px solid var(--border);text-align:right;color:var(--text2);white-space:nowrap">${ocMoney(it.buyPrice,it.currency)}</td>
+                    <td style="padding:6px 9px;border-top:1px solid var(--border);text-align:right;font-weight:700;white-space:nowrap">${ocMoney(it.sellPrice,it.currency)}</td>
+                    <td style="padding:6px 9px;border-top:1px solid var(--border);text-align:right;font-weight:600;white-space:nowrap;color:${lineProfit>=0?'#3B6D11':'#A32D2D'}">${ocMoney(lineProfit,it.currency)}</td>
+                    <td style="padding:6px 9px;border-top:1px solid var(--border);color:var(--text2);font-size:11px">${it.project?`<span style="background:var(--bg2);padding:2px 7px;border-radius:20px">${esc(it.project)}</span>`:'<span style="color:var(--text3)">—</span>'}</td>
+                  </tr>`;}).join('')}</tbody>
+                </table>
+              </div>
+            </div>
+            <div style="text-align:right;white-space:nowrap;min-width:150px">
+              <div style="font-size:10px;color:var(--text3)">Doanh thu</div>
+              <div style="font-size:15px;font-weight:800;color:var(--text)">${ocMoney(t.sell,t.cur)}</div>
+              <div style="font-size:10px;color:var(--text3);margin-top:6px">Lợi nhuận</div>
+              <div style="font-size:15px;font-weight:800;color:${mc}">${ocMoney(t.profit,t.cur)} <span style="font-size:11px">(${t.margin.toFixed(1)}%)</span></div>
+              <div style="display:flex;gap:6px;margin-top:10px;justify-content:flex-end">
+                <button class="btn btn-g" style="font-size:10px;padding:4px 9px" onclick="openOCModal('${c.id}')">✏️ Sửa</button>
+                <button class="btn btn-danger" style="font-size:10px;padding:4px 9px" onclick="delOC('${c.id}')">🗑 Xoá</button>
+              </div>
+            </div>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`:`
+    <div class="empty-state">
+      <div class="empty-state-icon">📑</div>
+      <div class="empty-state-title">${totalC?'Không tìm thấy hợp đồng phù hợp':'Chưa có hợp đồng đầu ra nào'}</div>
+      <div class="empty-state-desc">Mỗi khi bán hàng cho khách, tạo một hợp đồng và nhập các mặt hàng kèm giá mua vào &amp; giá bán ra.<br>Bạn sẽ quản lý được lợi nhuận và biết hàng cấp cho dự án nào.</div>
+      ${!totalC?`<button class="btn btn-p" style="margin-top:10px" onclick="openOCModal()">➕ Tạo hợp đồng đầu tiên</button>`:''}
+    </div>`}
+  </div>`;
+}
+
+function ocItemRowHtml(it){
+  it=it||{};
+  return `<tr class="oc-item-row">
+    <td style="padding:4px"><input class="inp oc-it-name" list="oc-name-list" value="${esc(it.name||'')}" placeholder="Tên hàng" oninput="ocRowSuggest(this)" style="font-size:12px;min-width:140px"></td>
+    <td style="padding:4px"><input class="inp oc-it-code" value="${esc(it.code||'')}" placeholder="Mã" style="font-size:12px;width:88px"></td>
+    <td style="padding:4px"><input class="inp oc-it-qty" value="${it.qty||1}" placeholder="1" style="font-size:12px;width:44px;text-align:center" oninput="this.value=this.value.replace(/[^0-9]/g,'')"></td>
+    <td style="padding:4px"><input class="inp oc-it-buy" value="${it.buyPrice?Number(it.buyPrice).toLocaleString('vi-VN'):''}" placeholder="0" style="font-size:12px;width:100px;text-align:right" inputmode="numeric" oninput="onPriceInput(this)"></td>
+    <td style="padding:4px"><input class="inp oc-it-sell" value="${it.sellPrice?Number(it.sellPrice).toLocaleString('vi-VN'):''}" placeholder="0" style="font-size:12px;width:100px;text-align:right;color:var(--success)" inputmode="numeric" oninput="onPriceInput(this)"></td>
+    <td style="padding:4px"><select class="inp oc-it-cur" style="font-size:12px;width:58px">${['VND','USD','EUR'].map(cu=>`<option value="${cu}"${(it.currency||'VND')===cu?' selected':''}>${cu}</option>`).join('')}</select></td>
+    <td style="padding:4px"><input class="inp oc-it-project" value="${esc(it.project||'')}" placeholder="Dự án / HĐ" style="font-size:12px;min-width:120px"></td>
+    <td style="padding:4px;text-align:center"><button class="pq-del-btn" onclick="this.closest('tr').remove()" title="Xoá dòng">✕</button></td>
+  </tr>`;
+}
+
+function openOCModal(id){
+  const c = id ? outContracts.find(x=>x.id===id) : null;
+  const isEdit=!!c;
+  const items = c && c.items && c.items.length ? c.items : [{}];
+  const custOpts = customers.map(x=>`<option value="${esc(x.companyName||x.shortName||'')}">`).join('');
+  const old=document.getElementById('oc-modal'); if(old)old.remove();
+  const m=document.createElement('div');
+  m.id='oc-modal';
+  m.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:24px 16px;overflow:auto';
+  m.innerHTML=`
+    <div style="background:var(--panel);border-radius:14px;padding:22px;max-width:920px;width:100%;margin:auto">
+      <div style="font-size:16px;font-weight:700;margin-bottom:16px;color:var(--text)">${isEdit?'✏️ Sửa hợp đồng đầu ra':'➕ Tạo hợp đồng đầu ra'}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px">
+        <div><label class="lbl">Khách hàng <span style="color:var(--danger)">*</span></label>
+          <input class="inp" id="oc-cust" list="oc-cust-list" value="${esc(c?.customerName||'')}" placeholder="Chọn/nhập khách hàng">
+          <datalist id="oc-cust-list">${custOpts}</datalist>
+        </div>
+        <div><label class="lbl">Số hợp đồng</label><input class="inp" id="oc-no" value="${esc(c?.contractNo||'')}" placeholder="VD: HĐ-2026-001"></div>
+        <div><label class="lbl">Ngày ký</label><input class="inp" type="date" id="oc-date" value="${c?.date? c.date.slice(0,10) : new Date().toISOString().slice(0,10)}"></div>
+      </div>
+      <div style="margin-bottom:8px"><label class="lbl">Danh sách hàng hóa (giá mua vào &amp; giá bán ra)</label></div>
+      <div style="border:1px solid var(--border);border-radius:8px;overflow:auto">
+        <table style="width:100%;border-collapse:collapse;min-width:720px">
+          <thead><tr>
+            <th style="background:var(--bg2);color:var(--text3);padding:7px 8px;text-align:left;font-size:10px;text-transform:uppercase">Tên hàng</th>
+            <th style="background:var(--bg2);color:var(--text3);padding:7px 8px;text-align:left;font-size:10px;text-transform:uppercase">Mã</th>
+            <th style="background:var(--bg2);color:var(--text3);padding:7px 8px;text-align:center;font-size:10px;text-transform:uppercase">SL</th>
+            <th style="background:var(--bg2);color:var(--text3);padding:7px 8px;text-align:right;font-size:10px;text-transform:uppercase">Giá mua</th>
+            <th style="background:var(--bg2);color:var(--text3);padding:7px 8px;text-align:right;font-size:10px;text-transform:uppercase">Giá bán</th>
+            <th style="background:var(--bg2);color:var(--text3);padding:7px 8px;text-align:center;font-size:10px;text-transform:uppercase">Tiền tệ</th>
+            <th style="background:var(--bg2);color:var(--text3);padding:7px 8px;text-align:left;font-size:10px;text-transform:uppercase">Dự án / HĐ</th>
+            <th style="background:var(--bg2);padding:7px 8px"></th>
+          </tr></thead>
+          <tbody id="oc-items-body">${items.map(it=>ocItemRowHtml(it)).join('')}</tbody>
+        </table>
+      </div>
+      <datalist id="oc-name-list">${catalog.map(c=>`<option value="${esc(c.name)}">`).join('')}</datalist>
+      <button class="pq-add-row" style="margin-top:10px" onclick="document.getElementById('oc-items-body').insertAdjacentHTML('beforeend', ocItemRowHtml({}))">＋ Thêm hàng hóa</button>
+      <div style="margin-top:14px"><label class="lbl">Ghi chú hợp đồng</label><input class="inp" id="oc-note" value="${esc(c?.note||'')}" placeholder="VD: điều kiện giao hàng, bảo hành..."></div>
+      <div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end">
+        <button class="btn btn-g" onclick="document.getElementById('oc-modal').remove()">Huỷ</button>
+        <button class="btn btn-p" onclick="saveOCModal(${isEdit?`'${c.id}'`:'null'})">${isEdit?'💾 Lưu hợp đồng':'➕ Tạo hợp đồng'}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+  setTimeout(()=>document.getElementById('oc-cust')?.focus(),80);
+}
+
+// Gợi ý mã + giá mua từ danh mục / lịch sử giá đầu vào
+function ocRowSuggest(inp){
+  const tr=inp.closest('tr');
+  const codeEl=tr?.querySelector('.oc-it-code');
+  const buyEl=tr?.querySelector('.oc-it-buy');
+  const hit=catalog.find(c=>stripVN(c.name||'')===stripVN(inp.value||''));
+  if(hit){
+    if(codeEl && !codeEl.value) codeEl.value=hit.code||'';
+    if(buyEl && !buyEl.value && hit.cost>0) buyEl.value=Number(hit.cost).toLocaleString('vi-VN');
+  }
+}
+
+function saveOCModal(id){
+  const customerName=(document.getElementById('oc-cust')?.value||'').trim();
+  if(!customerName){toast('Vui lòng nhập khách hàng','error');return;}
+  const rows=[...document.querySelectorAll('#oc-items-body .oc-item-row')];
+  const items=[];
+  for(const tr of rows){
+    const name=(tr.querySelector('.oc-it-name')?.value||'').trim();
+    const sellPrice=parseMoney(tr.querySelector('.oc-it-sell')?.value||'0');
+    const buyPrice=parseMoney(tr.querySelector('.oc-it-buy')?.value||'0');
+    if(!name && !sellPrice && !buyPrice) continue;
+    if(!name){toast('Có dòng thiếu tên hàng','error');return;}
+    items.push({
+      name,
+      code:(tr.querySelector('.oc-it-code')?.value||'').trim(),
+      qty:parseInt(tr.querySelector('.oc-it-qty')?.value||'1')||1,
+      buyPrice, sellPrice,
+      currency:tr.querySelector('.oc-it-cur')?.value||'VND',
+      project:(tr.querySelector('.oc-it-project')?.value||'').trim(),
+    });
+  }
+  if(!items.length){toast('Vui lòng nhập ít nhất 1 hàng hóa','error');return;}
+  const data={
+    customerName,
+    contractNo:(document.getElementById('oc-no')?.value||'').trim(),
+    date:document.getElementById('oc-date')?.value||new Date().toISOString().slice(0,10),
+    note:(document.getElementById('oc-note')?.value||'').trim(),
+    items,
+  };
+  if(id){
+    const i=outContracts.findIndex(x=>x.id===id);
+    if(i>=0) outContracts[i]={...outContracts[i],...data};
+    logAction('Sửa hợp đồng đầu ra', customerName, items.length+' mặt hàng');
+  }else{
+    data.id='oc'+Date.now()+Math.floor(Math.random()*1000);
+    data.createdBy=LS.get('bgpro:displayName')||currentUser||'';
+    data.createdAt=new Date().toISOString();
+    outContracts.unshift(data);
+    logAction('Tạo hợp đồng đầu ra', customerName, items.length+' mặt hàng');
+  }
+  ULS.set('oc',outContracts); sbAutoSync();
+  document.getElementById('oc-modal')?.remove();
+  renderOutContracts(document.getElementById('cust-tab-body'));
+  toast('Đã lưu hợp đồng','success');
+}
+
+function delOC(id){
+  const c=outContracts.find(x=>x.id===id);
+  if(!confirm('Xoá hợp đồng của "'+(c?.customerName||'')+'"'+(c?.contractNo?' ('+c.contractNo+')':'')+'?'))return;
+  outContracts=outContracts.filter(x=>x.id!==id);
+  ULS.set('oc',outContracts); sbAutoSync();
+  renderOutContracts(document.getElementById('cust-tab-body'));
+  toast('Đã xoá hợp đồng','warning');
+  logAction('Xoá hợp đồng đầu ra', c?.customerName||'', '');
+}
+
+function exportOCExcel(){
+  if(typeof XLSX==='undefined'){toast('Thư viện Excel chưa tải xong, thử lại','error');return;}
+  const rows=[['Ngày','Khách hàng','Số HĐ','Tên hàng','Mã hàng','SL','Giá mua','Giá bán','Lãi/đơn vị','Tiền tệ','Dự án / HĐ','Ghi chú','Người tạo']];
+  [...outContracts].sort((a,b)=>new Date(b.date||b.createdAt||0)-new Date(a.date||a.createdAt||0)).forEach(c=>{
+    (c.items||[]).forEach(it=>{
+      rows.push([ocDate(c.date||c.createdAt), c.customerName||'', c.contractNo||'', it.name||'', it.code||'', it.qty||1, it.buyPrice||0, it.sellPrice||0, (it.sellPrice||0)-(it.buyPrice||0), it.currency||'VND', it.project||'', c.note||'', c.createdBy||'']);
+    });
+  });
+  const ws=XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols']=[{wch:12},{wch:24},{wch:14},{wch:30},{wch:14},{wch:6},{wch:14},{wch:14},{wch:14},{wch:8},{wch:20},{wch:24},{wch:14}];
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,'Hợp đồng đầu ra');
+  XLSX.writeFile(wb,`HopDongDauRa_${new Date().toISOString().slice(0,10)}.xlsx`);
+  toast('Đã xuất Excel','success');
 }
 
 function renderCustTable(q){
@@ -5227,6 +5495,7 @@ function renderPriceHistory(el){
                     <th style="background:var(--bg2);color:var(--text3);padding:6px 9px;text-align:left;font-size:10px;text-transform:uppercase">Mã</th>
                     <th style="background:var(--bg2);color:var(--text3);padding:6px 9px;text-align:center;font-size:10px;text-transform:uppercase">SL</th>
                     <th style="background:var(--bg2);color:var(--text3);padding:6px 9px;text-align:right;font-size:10px;text-transform:uppercase">Đơn giá</th>
+                    <th style="background:var(--bg2);color:var(--text3);padding:6px 9px;text-align:left;font-size:10px;text-transform:uppercase">Dự án / HĐ</th>
                     <th style="background:var(--bg2);color:var(--text3);padding:6px 9px;text-align:center;font-size:10px;text-transform:uppercase"></th>
                   </tr></thead>
                   <tbody>${o.items.map(it=>`<tr>
@@ -5234,6 +5503,7 @@ function renderPriceHistory(el){
                     <td style="padding:6px 9px;border-top:1px solid var(--border);color:var(--accent2);font-weight:600">${esc(it.code||'')}</td>
                     <td style="padding:6px 9px;border-top:1px solid var(--border);text-align:center;color:var(--text2)">${it.qty||1}</td>
                     <td style="padding:6px 9px;border-top:1px solid var(--border);text-align:right;font-weight:700;white-space:nowrap">${fmtPHMoney(it.price,it.currency)}</td>
+                    <td style="padding:6px 9px;border-top:1px solid var(--border);color:var(--text2);font-size:11px">${it.project?`<span style="background:var(--bg2);padding:2px 7px;border-radius:20px">${esc(it.project)}</span>`:'<span style="color:var(--text3)">—</span>'}</td>
                     <td style="padding:6px 9px;border-top:1px solid var(--border);text-align:center"><button class="btn btn-g" style="padding:1px 6px;font-size:10px" onclick="openItemPriceTrend('${esc((it.code||it.name||'').replace(/'/g,''))}')" title="Xem lịch sử giá mặt hàng này">📈</button></td>
                   </tr>`).join('')}</tbody>
                 </table>
@@ -5264,11 +5534,12 @@ function renderPriceHistory(el){
 function phItemRowHtml(it){
   it = it||{};
   return `<tr class="ph-item-row">
-    <td style="padding:4px"><input class="inp ph-it-name" list="ph-name-list" value="${esc(it.name||'')}" placeholder="Tên thiết bị" oninput="phRowSuggestCode(this)" style="font-size:12px;min-width:150px"></td>
-    <td style="padding:4px"><input class="inp ph-it-code" value="${esc(it.code||'')}" placeholder="Mã" style="font-size:12px;width:100px"></td>
-    <td style="padding:4px"><input class="inp ph-it-qty" value="${it.qty||1}" placeholder="1" style="font-size:12px;width:52px;text-align:center" oninput="this.value=this.value.replace(/[^0-9]/g,'')"></td>
-    <td style="padding:4px"><input class="inp ph-it-price" value="${it.price?Number(it.price).toLocaleString('vi-VN'):''}" placeholder="0" style="font-size:12px;width:120px;text-align:right" inputmode="numeric" oninput="onPriceInput(this)"></td>
-    <td style="padding:4px"><select class="inp ph-it-cur" style="font-size:12px;width:66px">${['VND','USD','EUR'].map(c=>`<option value="${c}"${(it.currency||'VND')===c?' selected':''}>${c}</option>`).join('')}</select></td>
+    <td style="padding:4px"><input class="inp ph-it-name" list="ph-name-list" value="${esc(it.name||'')}" placeholder="Tên thiết bị" oninput="phRowSuggestCode(this)" style="font-size:12px;min-width:140px"></td>
+    <td style="padding:4px"><input class="inp ph-it-code" value="${esc(it.code||'')}" placeholder="Mã" style="font-size:12px;width:90px"></td>
+    <td style="padding:4px"><input class="inp ph-it-qty" value="${it.qty||1}" placeholder="1" style="font-size:12px;width:46px;text-align:center" oninput="this.value=this.value.replace(/[^0-9]/g,'')"></td>
+    <td style="padding:4px"><input class="inp ph-it-price" value="${it.price?Number(it.price).toLocaleString('vi-VN'):''}" placeholder="0" style="font-size:12px;width:110px;text-align:right" inputmode="numeric" oninput="onPriceInput(this)"></td>
+    <td style="padding:4px"><select class="inp ph-it-cur" style="font-size:12px;width:60px">${['VND','USD','EUR'].map(c=>`<option value="${c}"${(it.currency||'VND')===c?' selected':''}>${c}</option>`).join('')}</select></td>
+    <td style="padding:4px"><input class="inp ph-it-project" value="${esc(it.project||'')}" placeholder="Dự án / HĐ / Stock kho" style="font-size:12px;min-width:130px" title="Hàng này mua cho dự án/hợp đồng nào, hay đặt stock kho"></td>
     <td style="padding:4px;text-align:center"><button class="pq-del-btn" onclick="this.closest('tr').remove()" title="Xoá dòng">✕</button></td>
   </tr>`;
 }
@@ -5283,7 +5554,7 @@ function openPriceModal(id){
   m.id='price-modal';
   m.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:24px 16px;overflow:auto';
   m.innerHTML=`
-    <div style="background:var(--panel);border-radius:14px;padding:22px;max-width:760px;width:100%;margin:auto">
+    <div style="background:var(--panel);border-radius:14px;padding:22px;max-width:880px;width:100%;margin:auto">
       <div style="font-size:16px;font-weight:700;margin-bottom:16px;color:var(--text)">${isEdit?'✏️ Sửa đơn mua':'➕ Tạo đơn mua / hợp đồng'}</div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px">
         <div><label class="lbl">Nhà cung cấp <span style="color:var(--danger)">*</span></label>
@@ -5302,6 +5573,7 @@ function openPriceModal(id){
             <th style="background:var(--bg2);color:var(--text3);padding:7px 8px;text-align:center;font-size:10px;text-transform:uppercase">SL</th>
             <th style="background:var(--bg2);color:var(--text3);padding:7px 8px;text-align:right;font-size:10px;text-transform:uppercase">Đơn giá</th>
             <th style="background:var(--bg2);color:var(--text3);padding:7px 8px;text-align:center;font-size:10px;text-transform:uppercase">Tiền tệ</th>
+            <th style="background:var(--bg2);color:var(--text3);padding:7px 8px;text-align:left;font-size:10px;text-transform:uppercase">Dự án / HĐ / Kho</th>
             <th style="background:var(--bg2);padding:7px 8px"></th>
           </tr></thead>
           <tbody id="ph-items-body">${items.map(it=>phItemRowHtml(it)).join('')}</tbody>
@@ -5347,6 +5619,7 @@ function savePriceModal(id){
       qty:parseInt(tr.querySelector('.ph-it-qty')?.value||'1')||1,
       price,
       currency:tr.querySelector('.ph-it-cur')?.value||'VND',
+      project:(tr.querySelector('.ph-it-project')?.value||'').trim(),
     });
   }
   if(!items.length){toast('Vui lòng nhập ít nhất 1 thiết bị','error');return;}
@@ -5449,14 +5722,14 @@ function openItemPriceTrend(key){
 
 function exportPriceHistoryExcel(){
   if(typeof XLSX==='undefined'){toast('Thư viện Excel chưa tải xong, thử lại','error');return;}
-  const rows=[['Ngày','Nhà cung cấp','Số HĐ/Đơn','Tên thiết bị','Mã hàng','Số lượng','Đơn giá','Tiền tệ','Ghi chú đơn','Người nhập']];
+  const rows=[['Ngày','Nhà cung cấp','Số HĐ/Đơn','Tên thiết bị','Mã hàng','Số lượng','Đơn giá','Tiền tệ','Dự án / HĐ / Kho','Ghi chú đơn','Người nhập']];
   [...priceHistory].filter(o=>o&&o.items).sort((a,b)=>new Date(b.date||b.createdAt||0)-new Date(a.date||a.createdAt||0)).forEach(o=>{
     (o.items||[]).forEach(it=>{
-      rows.push([fmtPHDate(o.date||o.createdAt), o.supplierName||'', o.poNumber||'', it.name||'', it.code||'', it.qty||1, it.price||0, it.currency||'VND', o.note||'', o.createdBy||'']);
+      rows.push([fmtPHDate(o.date||o.createdAt), o.supplierName||'', o.poNumber||'', it.name||'', it.code||'', it.qty||1, it.price||0, it.currency||'VND', it.project||'', o.note||'', o.createdBy||'']);
     });
   });
   const ws=XLSX.utils.aoa_to_sheet(rows);
-  ws['!cols']=[{wch:12},{wch:24},{wch:16},{wch:32},{wch:16},{wch:8},{wch:16},{wch:8},{wch:26},{wch:16}];
+  ws['!cols']=[{wch:12},{wch:24},{wch:16},{wch:32},{wch:16},{wch:8},{wch:16},{wch:8},{wch:22},{wch:26},{wch:16}];
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,ws,'Lịch sử giá đầu vào');
   XLSX.writeFile(wb,`LichSuGiaDauVao_${new Date().toISOString().slice(0,10)}.xlsx`);
@@ -6808,6 +7081,7 @@ function exportAllData(){
     sup:  suppliers||[],
     tpl:  templates||[],
     ph:   priceHistory||[],
+    oc:   outContracts||[],
     calc: calcState||null,
   };
   const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
@@ -6832,7 +7106,7 @@ function importAndMergeData(inp){
       if(!confirm('File này có thể không phải bản sao lưu của phần mềm. Vẫn thử gộp?')){ inp.value=''; return; }
     }
     // Gộp theo id/mã, không ghi đè mục đang có
-    const merged={qs:0,pqs:0,cat:0,cust:0,sup:0,ph:0,tpl:0};
+    const merged={qs:0,pqs:0,cat:0,cust:0,sup:0,ph:0,tpl:0,oc:0};
 
     // Báo giá — gộp theo id (hoặc num nếu thiếu id)
     if(Array.isArray(data.qs)){
@@ -6869,16 +7143,21 @@ function importAndMergeData(inp){
       const seen=new Set((templates||[]).map(t=>t.id||t.name));
       data.tpl.forEach(t=>{ const k=t.id||t.name; if(k && !seen.has(k)){ templates.push(t); seen.add(k); merged.tpl++; } });
     }
+    // Hợp đồng đầu ra — gộp theo id
+    if(Array.isArray(data.oc)){
+      const seen=new Set((outContracts||[]).map(c=>c.id));
+      data.oc.forEach(c=>{ if(c.id && !seen.has(c.id)){ outContracts.push(c); seen.add(c.id); merged.oc++; } });
+    }
 
     // Lưu lại + đồng bộ lên kho chung
     ULS.set('qs',quotes); ULS.set('pqs',projects); ULS.set('cat',catalog);
     ULS.set('cust',customers); ULS.set('sup',suppliers); ULS.set('ph',priceHistory);
-    ULS.set('tpl',templates);
+    ULS.set('tpl',templates); ULS.set('oc',outContracts);
     sbAutoSync();
     inp.value='';
 
     const total=Object.values(merged).reduce((a,b)=>a+b,0);
-    const detail=`Báo giá: ${merged.qs} · Dự án: ${merged.pqs} · Danh mục: ${merged.cat} · KH: ${merged.cust} · NCC: ${merged.sup} · Lịch sử giá: ${merged.ph}`;
+    const detail=`Báo giá: ${merged.qs} · Dự án: ${merged.pqs} · Danh mục: ${merged.cat} · KH: ${merged.cust} · NCC: ${merged.sup} · Lịch sử giá: ${merged.ph} · HĐ đầu ra: ${merged.oc}`;
     if(total===0){
       toast('Không có mục mới để gộp','warning','Tất cả đã có trong kho');
     }else{
