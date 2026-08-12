@@ -1185,6 +1185,9 @@ select option{background:var(--bg2);}
     <button class="nav-btn" id="nb-sup" onclick="goPage('suppliers')">
       <div class="nav-icon">🏭</div>Nhà cung cấp
     </button>
+    <button class="nav-btn" id="nb-inventory" onclick="goPage('inventory')">
+      <div class="nav-icon">📦</div>Hàng tồn kho
+    </button>
     <button class="nav-btn" id="nb-report" onclick="goPage('report')">
       <div class="nav-icon">📈</div>Báo cáo
     </button>
@@ -1499,11 +1502,13 @@ function loginUser(user,name){
           auditLog = cloudData.log || auditLog;
           priceHistory = cloudData.ph || priceHistory;
           outContracts = cloudData.oc || outContracts;
+          stockOut = cloudData.so || stockOut;
+          stockIn = cloudData.si || stockIn;
           if(cloudData.calc) calcState = {...calcState, ...cloudData.calc};
           ULS.set('qs', quotes); ULS.set('pqs', projects); ULS.set('co', company);
           ULS.set('cat', catalog); ULS.set('cust', customers);
           ULS.set('sup', suppliers); ULS.set('tpl', templates);
-          ULS.set('log', auditLog); ULS.set('ph', priceHistory); ULS.set('oc', outContracts);
+          ULS.set('log', auditLog); ULS.set('ph', priceHistory); ULS.set('oc', outContracts); ULS.set('so', stockOut); ULS.set('si', stockIn);
           if(cloudData.calc) ULS.set('calc', calcState);
           updateSB();
           const ce = document.getElementById('content');
@@ -1670,7 +1675,7 @@ window.addEventListener('DOMContentLoaded',()=>{
 });
 
 // ── STORAGE (see above for LS definition) ───────────────────
-const KEYS={co:'co',qs:'qs',cat:'cat',calc:'calc',cust:'cust',sup:'sup',tpl:'tpl',log:'log',ph:'ph',oc:'oc'};
+const KEYS={co:'co',qs:'qs',cat:'cat',calc:'calc',cust:'cust',sup:'sup',tpl:'tpl',log:'log',ph:'ph',oc:'oc',so:'so',si:'si'};
 
 // ── CONSTANTS ───────────────────────────────────────────────
 const CURR={
@@ -1786,6 +1791,8 @@ let templates=ULS.get(KEYS.tpl)||[]; // [{id,name,description,items:[...],create
 let auditLog=ULS.get(KEYS.log)||[]; // [{id,time,user,action,target,detail}] — chỉ lưu tối đa 500 dòng gần nhất
 let priceHistory=ULS.get(KEYS.ph)||[]; // [{id,itemName,itemCode,supplierId,supplierName,price,currency,qty,date,note,createdBy,createdAt}] — lịch sử giá đầu vào (giá mua)
 let outContracts=ULS.get('oc')||[]; // [{id,customerName,contractNo,date,note,items:[{name,code,qty,buyPrice,sellPrice,currency,project}],createdBy,createdAt}] — hợp đồng đầu ra (bán cho KH)
+let stockOut=ULS.get('so')||[]; // [{id,key,name,code,qty,date,note,project,createdBy,createdAt}] — các lần xuất kho thủ công (key = mã hoặc tên chuẩn hoá để nhóm)
+let stockIn=ULS.get('si')||[]; // [{id,name,code,brand,qty,date,contractNo,project,note,createdBy,createdAt}] — nhập kho thủ công (hàng chưa có đơn mua/chưa kịp nhập)
 let cq=null; // current quote being edited
 
 const bq=()=>({
@@ -1909,7 +1916,7 @@ function goPage(p){
   currentPage=ap;
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
   document.querySelectorAll('.bn-item').forEach(b=>b.classList.remove('active'));
-  const nm={dashboard:'nb-dash',editor:'nb-new',settings:'nb-set',catalog:'nb-cat',calc:'nb-calc',report:'nb-report',project:'nb-project',customers:'nb-cust',suppliers:'nb-sup'};
+  const nm={dashboard:'nb-dash',editor:'nb-new',settings:'nb-set',catalog:'nb-cat',calc:'nb-calc',report:'nb-report',project:'nb-project',customers:'nb-cust',suppliers:'nb-sup',inventory:'nb-inventory'};
   const nb=document.getElementById(nm[ap]);if(nb)nb.classList.add('active');
   const bnm={dashboard:'bn-dash',editor:'bn-new',settings:'bn-more',catalog:'bn-cat',calc:'bn-more',report:'bn-more',project:'bn-more',customers:'bn-cust',suppliers:'bn-more'};
   const bnb=document.getElementById(bnm[ap]);if(bnb)bnb.classList.add('active');
@@ -1932,6 +1939,7 @@ function goPage(p){
     else if(ap==='project')renderProjectPage(ce);
     else if(ap==='customers')renderCustomers(ce);
     else if(ap==='suppliers')renderSuppliers(ce);
+    else if(ap==='inventory')renderInventory(ce);
     else renderSettings(ce);
     requestAnimationFrame(()=>{
       ce.style.transition='opacity .22s ease,transform .22s ease';
@@ -2955,6 +2963,12 @@ async function sbInit() {
   if (Array.isArray(cloudData.oc) && (cloudData.oc.length >= outContracts.length || outContracts.length===0)) {
     outContracts = cloudData.oc; ULS.set('oc', outContracts); changed = true;
   }
+  if (Array.isArray(cloudData.so) && (cloudData.so.length >= stockOut.length || stockOut.length===0)) {
+    stockOut = cloudData.so; ULS.set('so', stockOut); changed = true;
+  }
+  if (Array.isArray(cloudData.si) && (cloudData.si.length >= stockIn.length || stockIn.length===0)) {
+    stockIn = cloudData.si; ULS.set('si', stockIn); changed = true;
+  }
   if (changed) {
     updateSB();
     if (currentPage === 'dashboard') goPage('dashboard');
@@ -2983,6 +2997,8 @@ function sbAutoSync() {
       log:  ULS.get('log')  || [],
       ph:   ULS.get('ph')   || [],
       oc:   ULS.get('oc')   || [],
+      so:   ULS.get('so')   || [],
+      si:   ULS.get('si')   || [],
     };
     await gdSaveUserData(currentUser, dataObj);
   }, 3000);
@@ -5031,6 +5047,331 @@ function exportOCExcel(){
   XLSX.utils.book_append_sheet(wb,ws,'Hợp đồng đầu ra');
   XLSX.writeFile(wb,`HopDongDauRa_${new Date().toISOString().slice(0,10)}.xlsx`);
   toast('Đã xuất Excel','success');
+}
+
+// ── HÀNG TỒN KHO ──────────────────────────────────────────────
+// Nhập kho = tổng SL từ các đơn mua (mặt hàng có ghi ô Dự án/HĐ/Kho).
+// Xuất kho = tổng SL các lần xuất thủ công (stockOut).
+// Tồn = Nhập − Xuất.
+let _invSearch='';
+function invKey(name,code){ return stripVN(code||'') || stripVN(name||''); }
+
+// Tổng hợp tồn kho theo từng mặt hàng
+function computeInventory(){
+  const map={}; // key -> {key,name,code,brand,inQty,outQty,contracts:Set,projects:Set,lastDate}
+  // 1. Nhập kho từ đơn mua — CHỈ tính mặt hàng có ghi project (Dự án/HĐ/Kho)
+  (priceHistory||[]).forEach(o=>{
+    (o.items||[]).forEach(it=>{
+      if(!(it.project||'').trim()) return; // bỏ qua hàng không gắn kho/dự án
+      const k=invKey(it.name,it.code); if(!k) return;
+      if(!map[k]) map[k]={key:k,name:it.name||'',code:it.code||'',brand:'',inQty:0,outQty:0,contracts:new Set(),projects:new Set(),lastDate:null};
+      const m=map[k];
+      m.inQty += (+it.qty||0);
+      if(o.poNumber) m.contracts.add(o.poNumber);
+      if(it.project) m.projects.add(it.project);
+      if(!m.name && it.name) m.name=it.name;
+      if(!m.code && it.code) m.code=it.code;
+      const d=o.date||o.createdAt; if(d && (!m.lastDate || new Date(d)>new Date(m.lastDate))) m.lastDate=d;
+      // Lấy hãng SX từ danh mục nếu có
+      if(!m.brand){ const cat=catalog.find(c=>invKey(c.name,c.code)===k); if(cat && cat.brand) m.brand=cat.brand; }
+    });
+  });
+  // 1b. Nhập kho THỦ CÔNG (hàng chưa có đơn mua / chưa kịp nhập dữ liệu)
+  (stockIn||[]).forEach(s=>{
+    const k=invKey(s.name,s.code); if(!k) return;
+    if(!map[k]) map[k]={key:k,name:s.name||'',code:s.code||'',brand:'',inQty:0,outQty:0,contracts:new Set(),projects:new Set(),lastDate:null};
+    const m=map[k];
+    m.inQty += (+s.qty||0);
+    if(s.contractNo) m.contracts.add(s.contractNo);
+    if(s.project) m.projects.add(s.project);
+    if(!m.name && s.name) m.name=s.name;
+    if(!m.code && s.code) m.code=s.code;
+    if(!m.brand && s.brand) m.brand=s.brand;
+    const d=s.date||s.createdAt; if(d && (!m.lastDate || new Date(d)>new Date(m.lastDate))) m.lastDate=d;
+    if(!m.brand){ const cat=catalog.find(c=>invKey(c.name,c.code)===k); if(cat && cat.brand) m.brand=cat.brand; }
+  });
+  // 2. Xuất kho thủ công
+  (stockOut||[]).forEach(s=>{
+    const k=s.key||invKey(s.name,s.code); if(!k) return;
+    if(!map[k]) map[k]={key:k,name:s.name||'',code:s.code||'',brand:'',inQty:0,outQty:0,contracts:new Set(),projects:new Set(),lastDate:null};
+    map[k].outQty += (+s.qty||0);
+  });
+  // Chuyển Set -> mảng, tính tồn
+  return Object.values(map).map(m=>({
+    ...m,
+    contracts:[...m.contracts],
+    projects:[...m.projects],
+    stock:m.inQty-m.outQty,
+  })).sort((a,b)=>a.name.localeCompare(b.name,'vi'));
+}
+
+function renderInventory(el){
+  const inv=computeInventory();
+  const kw=stripVN(_invSearch||'');
+  const list=kw?inv.filter(m=>stripVN(m.name).includes(kw)||stripVN(m.code).includes(kw)||m.projects.some(p=>stripVN(p).includes(kw))||m.contracts.some(c=>stripVN(c).includes(kw))):inv;
+  const totalItems=inv.length;
+  const totalStock=inv.reduce((s,m)=>s+Math.max(0,m.stock),0);
+  const outOfStock=inv.filter(m=>m.stock<=0).length;
+  const lowStock=inv.filter(m=>m.stock>0 && m.stock<=2).length;
+
+  el.innerHTML=`
+  <div class="card">
+    <div class="card-title">📦 Hàng tồn kho</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Tự động tổng hợp từ <b>đơn mua</b> (mặt hàng có ghi ô Dự án/HĐ/Kho) làm số <b>nhập kho</b>. Bạn nhập tay số <b>xuất kho</b> khi giao hàng. <b>Tồn = Nhập − Xuất</b>.</div>
+    <div class="abar" style="margin-bottom:12px">
+      <button class="btn btn-p" onclick="openStockInModal()">➕ Tự thêm hàng vào kho</button>
+      <input class="inp" id="inv-q" value="${esc(_invSearch)}" placeholder="🔍  Tìm theo tên, mã hàng, dự án, số HĐ..." oninput="_invSearch=this.value;renderInventory(document.getElementById('content'))" style="max-width:340px;flex:1">
+      ${totalItems?`<button class="btn btn-g" onclick="exportInventoryExcel()">📤 Export Excel</button>`:''}
+    </div>
+    ${totalItems?`<div class="cat-stats">
+      <div class="cat-stat"><b>${totalItems}</b>Mặt hàng</div>
+      <div class="cat-stat"><b>${totalStock.toLocaleString('vi-VN')}</b>Tổng tồn</div>
+      ${lowStock?`<div class="cat-stat" style="color:#B8860B"><b>${lowStock}</b>Sắp hết (≤2)</div>`:''}
+      ${outOfStock?`<div class="cat-stat" style="color:#A32D2D"><b>${outOfStock}</b>Hết hàng</div>`:''}
+    </div>`:''}
+    ${list.length?`
+    <div class="cat-table-wrap">
+      <table class="cat-table">
+        <thead><tr>
+          <th>Tên hàng hóa</th><th>Mã</th><th>Hãng SX</th><th>Số HĐ nhập</th><th>Dự án / Kho</th>
+          <th style="text-align:center">Nhập</th><th style="text-align:center">Xuất</th><th style="text-align:center">Tồn</th><th></th>
+        </tr></thead>
+        <tbody>${list.map(m=>{
+          const sc=m.stock<=0?'#A32D2D':m.stock<=2?'#B8860B':'#3B6D11';
+          return `<tr>
+            <td style="font-weight:600">${esc(m.name)}</td>
+            <td style="color:var(--accent2);font-weight:600">${esc(m.code)}</td>
+            <td style="color:var(--text2);font-size:12px">${esc(m.brand||'—')}</td>
+            <td style="font-size:12px">${m.contracts.length?m.contracts.map(c=>`<span style="background:var(--bg2);padding:1px 7px;border-radius:20px;margin:1px;display:inline-block">${esc(c)}</span>`).join(' '):'<span style="color:var(--text3)">—</span>'}</td>
+            <td style="font-size:12px">${m.projects.length?m.projects.map(p=>`<span style="background:var(--bg2);padding:1px 7px;border-radius:20px;margin:1px;display:inline-block">${esc(p)}</span>`).join(' '):'<span style="color:var(--text3)">—</span>'}</td>
+            <td style="text-align:center;font-weight:600">${m.inQty}</td>
+            <td style="text-align:center;color:var(--text2)">${m.outQty}</td>
+            <td style="text-align:center;font-weight:800;font-size:15px;color:${sc}">${m.stock}</td>
+            <td><button class="btn btn-g" style="font-size:11px;padding:4px 9px" onclick="openStockOutModal('${esc(m.key)}')" title="Ghi nhận xuất kho">📤 Xuất</button></td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>
+    <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-g" onclick="openStockInHistory()">📋 Hàng tự thêm</button><button class="btn btn-g" onclick="openStockOutHistory()">📋 Lịch sử xuất kho</button></div>
+    `:`
+    <div class="empty-state">
+      <div class="empty-state-icon">📦</div>
+      <div class="empty-state-title">${totalItems?'Không tìm thấy mặt hàng phù hợp':'Chưa có hàng tồn kho'}</div>
+      <div class="empty-state-desc">Hàng tồn kho tự động tổng hợp từ các <b>đơn mua</b> có ghi ô <b>Dự án/HĐ/Kho</b>.<br>Vào <b>Nhà cung cấp → Lịch sử giá đầu vào → Tạo đơn mua</b>, nhập mặt hàng và điền ô Dự án/HĐ/Kho để hàng hiện ở đây.<br>Hoặc <b>tự thêm hàng</b> vào kho cho những mặt hàng chưa có đơn mua.</div>
+      <button class="btn btn-p" style="margin-top:10px" onclick="openStockInModal()">➕ Tự thêm hàng vào kho</button>
+    </div>`}
+  </div>`;
+}
+
+function openStockOutModal(key){
+  const inv=computeInventory();
+  const m=inv.find(x=>x.key===key);
+  if(!m){toast('Không tìm thấy mặt hàng','error');return;}
+  const old=document.getElementById('so-modal'); if(old)old.remove();
+  const el=document.createElement('div');
+  el.id='so-modal';
+  el.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;overflow:auto';
+  el.innerHTML=`
+    <div style="background:var(--panel);border-radius:14px;padding:22px;max-width:460px;width:100%">
+      <div style="font-size:16px;font-weight:700;margin-bottom:4px;color:var(--text)">📤 Ghi nhận xuất kho</div>
+      <div style="font-size:13px;color:var(--text2);margin-bottom:16px">${esc(m.name)}${m.code?' · '+esc(m.code):''} — Tồn hiện tại: <b style="color:${m.stock<=0?'#A32D2D':'#3B6D11'}">${m.stock}</b></div>
+      <div style="margin-bottom:12px"><label class="lbl">Số lượng xuất <span style="color:var(--danger)">*</span></label>
+        <input class="inp" id="so-qty" type="number" min="1" value="1" style="width:100%"></div>
+      <div style="margin-bottom:12px"><label class="lbl">Ngày xuất</label>
+        <input class="inp" id="so-date" type="date" value="${new Date().toISOString().slice(0,10)}" style="width:100%"></div>
+      <div style="margin-bottom:12px"><label class="lbl">Xuất cho dự án / khách hàng</label>
+        <input class="inp" id="so-project" placeholder="VD: giao cho Dự án Long An" style="width:100%"></div>
+      <div style="margin-bottom:4px"><label class="lbl">Ghi chú</label>
+        <input class="inp" id="so-note" placeholder="VD: số phiếu xuất, người nhận..." style="width:100%"></div>
+      <div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end">
+        <button class="btn btn-g" onclick="document.getElementById('so-modal').remove()">Huỷ</button>
+        <button class="btn btn-p" onclick="saveStockOut('${esc(key)}','${esc((m.name||'').replace(/'/g,''))}','${esc((m.code||'').replace(/'/g,''))}')">💾 Ghi xuất kho</button>
+      </div>
+    </div>`;
+  document.body.appendChild(el);
+  setTimeout(()=>document.getElementById('so-qty')?.select(),80);
+}
+
+function saveStockOut(key,name,code){
+  const qty=parseInt(document.getElementById('so-qty')?.value||'0')||0;
+  if(qty<=0){toast('Số lượng xuất phải lớn hơn 0','error');return;}
+  stockOut.unshift({
+    id:'so'+Date.now()+Math.floor(Math.random()*1000),
+    key, name, code, qty,
+    date:document.getElementById('so-date')?.value||new Date().toISOString().slice(0,10),
+    project:(document.getElementById('so-project')?.value||'').trim(),
+    note:(document.getElementById('so-note')?.value||'').trim(),
+    createdBy:LS.get('bgpro:displayName')||currentUser||'',
+    createdAt:new Date().toISOString(),
+  });
+  ULS.set('so',stockOut); sbAutoSync();
+  document.getElementById('so-modal')?.remove();
+  renderInventory(document.getElementById('content'));
+  toast('Đã ghi xuất kho','success', name+' × '+qty);
+  logAction('Xuất kho', name, 'SL: '+qty);
+}
+
+function openStockOutHistory(){
+  const old=document.getElementById('soh-modal'); if(old)old.remove();
+  const sorted=[...stockOut].sort((a,b)=>new Date(b.date||b.createdAt||0)-new Date(a.date||a.createdAt||0));
+  const el=document.createElement('div');
+  el.id='soh-modal';
+  el.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:24px 16px;overflow:auto';
+  el.innerHTML=`
+    <div style="background:var(--panel);border-radius:14px;padding:22px;max-width:720px;width:100%;margin:auto">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div style="font-size:16px;font-weight:700;color:var(--text)">📋 Lịch sử xuất kho</div>
+        <button class="btn btn-g" style="padding:3px 10px" onclick="document.getElementById('soh-modal').remove()">✕</button>
+      </div>
+      ${sorted.length?`<div class="cat-table-wrap"><table class="cat-table" style="font-size:12px">
+        <thead><tr><th>Ngày</th><th>Tên hàng</th><th>Mã</th><th style="text-align:center">SL</th><th>Xuất cho</th><th>Ghi chú</th><th></th></tr></thead>
+        <tbody>${sorted.map(s=>`<tr>
+          <td style="white-space:nowrap">${new Date(s.date||s.createdAt).toLocaleDateString('vi-VN')}</td>
+          <td style="font-weight:600">${esc(s.name||'')}</td>
+          <td style="color:var(--accent2)">${esc(s.code||'')}</td>
+          <td style="text-align:center;font-weight:700">${s.qty}</td>
+          <td>${esc(s.project||'—')}</td>
+          <td style="color:var(--text2)">${esc(s.note||'')}</td>
+          <td><button class="btn btn-danger" style="font-size:10px;padding:2px 7px" onclick="delStockOut('${s.id}')">🗑</button></td>
+        </tr>`).join('')}</tbody>
+      </table></div>`:`<div style="text-align:center;color:var(--muted);padding:30px 0">Chưa có lần xuất kho nào.</div>`}
+    </div>`;
+  document.body.appendChild(el);
+}
+
+function delStockOut(id){
+  const s=stockOut.find(x=>x.id===id);
+  if(!confirm('Xoá bản ghi xuất kho "'+(s?.name||'')+' × '+(s?.qty||'')+'"? Tồn kho sẽ được cộng lại.'))return;
+  stockOut=stockOut.filter(x=>x.id!==id);
+  ULS.set('so',stockOut); sbAutoSync();
+  document.getElementById('soh-modal')?.remove();
+  renderInventory(document.getElementById('content'));
+  toast('Đã xoá bản ghi xuất kho','warning');
+}
+
+function exportInventoryExcel(){
+  if(typeof XLSX==='undefined'){toast('Thư viện Excel chưa tải xong, thử lại','error');return;}
+  const inv=computeInventory();
+  const rows=[['Tên hàng hóa','Mã hàng','Hãng SX','Số HĐ nhập','Dự án / Kho','Nhập kho','Xuất kho','Tồn kho']];
+  inv.forEach(m=>rows.push([m.name,m.code,m.brand||'',m.contracts.join(', '),m.projects.join(', '),m.inQty,m.outQty,m.stock]));
+  const ws=XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols']=[{wch:32},{wch:16},{wch:20},{wch:24},{wch:24},{wch:10},{wch:10},{wch:10}];
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,'Hàng tồn kho');
+  XLSX.writeFile(wb,`HangTonKho_${new Date().toISOString().slice(0,10)}.xlsx`);
+  toast('Đã xuất Excel','success');
+}
+
+// ── NHẬP KHO THỦ CÔNG (hàng chưa có đơn mua / chưa kịp nhập) ──
+function openStockInModal(){
+  const old=document.getElementById('si-modal'); if(old)old.remove();
+  const el=document.createElement('div');
+  el.id='si-modal';
+  el.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:24px 16px;overflow:auto';
+  el.innerHTML=`
+    <div style="background:var(--panel);border-radius:14px;padding:22px;max-width:520px;width:100%;margin:auto">
+      <div style="font-size:16px;font-weight:700;margin-bottom:4px;color:var(--text)">➕ Tự thêm hàng vào kho</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Dùng cho hàng nhập về nhưng chưa có đơn mua, hoặc chưa kịp nhập dữ liệu. Có thể bổ sung đơn mua sau — hệ thống cộng dồn số nhập.</div>
+      <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-bottom:12px">
+        <div><label class="lbl">Tên hàng hóa <span style="color:var(--danger)">*</span></label>
+          <input class="inp" id="si-name" list="si-name-list" placeholder="Tên thiết bị" oninput="siFillFromCatalog(this)" style="width:100%">
+          <datalist id="si-name-list">${catalog.map(c=>`<option value="${esc(c.name)}">`).join('')}</datalist>
+        </div>
+        <div><label class="lbl">Mã hàng</label><input class="inp" id="si-code" placeholder="Mã" style="width:100%"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-bottom:12px">
+        <div><label class="lbl">Hãng sản xuất</label><input class="inp" id="si-brand" placeholder="VD: Endress+Hauser - Đức" style="width:100%"></div>
+        <div><label class="lbl">Số lượng nhập <span style="color:var(--danger)">*</span></label><input class="inp" id="si-qty" type="number" min="1" value="1" style="width:100%"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+        <div><label class="lbl">Số HĐ / Đơn (nếu có)</label><input class="inp" id="si-contract" placeholder="VD: PO-2026-030" style="width:100%"></div>
+        <div><label class="lbl">Ngày nhập</label><input class="inp" id="si-date" type="date" value="${new Date().toISOString().slice(0,10)}" style="width:100%"></div>
+      </div>
+      <div style="margin-bottom:12px"><label class="lbl">Dự án / HĐ / Kho</label><input class="inp" id="si-project" placeholder="VD: Stock kho, Dự án Long An..." style="width:100%"></div>
+      <div style="margin-bottom:4px"><label class="lbl">Ghi chú</label><input class="inp" id="si-note" placeholder="VD: hàng mẫu, hàng tồn cũ..." style="width:100%"></div>
+      <div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end">
+        <button class="btn btn-g" onclick="document.getElementById('si-modal').remove()">Huỷ</button>
+        <button class="btn btn-p" onclick="saveStockIn()">💾 Thêm vào kho</button>
+      </div>
+    </div>`;
+  document.body.appendChild(el);
+  setTimeout(()=>document.getElementById('si-name')?.focus(),80);
+}
+
+// Gợi ý mã + hãng từ danh mục khi nhập tên
+function siFillFromCatalog(inp){
+  const hit=catalog.find(c=>stripVN(c.name||'')===stripVN(inp.value||''));
+  if(hit){
+    const codeEl=document.getElementById('si-code');
+    const brandEl=document.getElementById('si-brand');
+    if(codeEl && !codeEl.value) codeEl.value=hit.code||'';
+    if(brandEl && !brandEl.value) brandEl.value=hit.brand||'';
+  }
+}
+
+function saveStockIn(){
+  const name=(document.getElementById('si-name')?.value||'').trim();
+  if(!name){toast('Vui lòng nhập tên hàng hóa','error');return;}
+  const qty=parseInt(document.getElementById('si-qty')?.value||'0')||0;
+  if(qty<=0){toast('Số lượng nhập phải lớn hơn 0','error');return;}
+  stockIn.unshift({
+    id:'si'+Date.now()+Math.floor(Math.random()*1000),
+    name,
+    code:(document.getElementById('si-code')?.value||'').trim(),
+    brand:(document.getElementById('si-brand')?.value||'').trim(),
+    qty,
+    contractNo:(document.getElementById('si-contract')?.value||'').trim(),
+    date:document.getElementById('si-date')?.value||new Date().toISOString().slice(0,10),
+    project:(document.getElementById('si-project')?.value||'').trim(),
+    note:(document.getElementById('si-note')?.value||'').trim(),
+    createdBy:LS.get('bgpro:displayName')||currentUser||'',
+    createdAt:new Date().toISOString(),
+  });
+  ULS.set('si',stockIn); sbAutoSync();
+  document.getElementById('si-modal')?.remove();
+  renderInventory(document.getElementById('content'));
+  toast('Đã thêm vào kho','success', name+' × '+qty);
+  logAction('Nhập kho thủ công', name, 'SL: '+qty);
+}
+
+function openStockInHistory(){
+  const old=document.getElementById('sih-modal'); if(old)old.remove();
+  const sorted=[...stockIn].sort((a,b)=>new Date(b.date||b.createdAt||0)-new Date(a.date||a.createdAt||0));
+  const el=document.createElement('div');
+  el.id='sih-modal';
+  el.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:24px 16px;overflow:auto';
+  el.innerHTML=`
+    <div style="background:var(--panel);border-radius:14px;padding:22px;max-width:780px;width:100%;margin:auto">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <div style="font-size:16px;font-weight:700;color:var(--text)">📋 Hàng tự thêm vào kho</div>
+        <button class="btn btn-g" style="padding:3px 10px" onclick="document.getElementById('sih-modal').remove()">✕</button>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Các mặt hàng nhập kho thủ công (không qua đơn mua). Xoá bản ghi thì số nhập kho tương ứng bị trừ đi.</div>
+      ${sorted.length?`<div class="cat-table-wrap"><table class="cat-table" style="font-size:12px">
+        <thead><tr><th>Ngày</th><th>Tên hàng</th><th>Mã</th><th>Hãng</th><th style="text-align:center">SL</th><th>Số HĐ</th><th>Dự án/Kho</th><th></th></tr></thead>
+        <tbody>${sorted.map(s=>`<tr>
+          <td style="white-space:nowrap">${new Date(s.date||s.createdAt).toLocaleDateString('vi-VN')}</td>
+          <td style="font-weight:600">${esc(s.name||'')}</td>
+          <td style="color:var(--accent2)">${esc(s.code||'')}</td>
+          <td style="color:var(--text2)">${esc(s.brand||'')}</td>
+          <td style="text-align:center;font-weight:700">${s.qty}</td>
+          <td>${esc(s.contractNo||'—')}</td>
+          <td>${esc(s.project||'—')}</td>
+          <td><button class="btn btn-danger" style="font-size:10px;padding:2px 7px" onclick="delStockIn('${s.id}')">🗑</button></td>
+        </tr>`).join('')}</tbody>
+      </table></div>`:`<div style="text-align:center;color:var(--muted);padding:30px 0">Chưa có hàng tự thêm nào.</div>`}
+    </div>`;
+  document.body.appendChild(el);
+}
+
+function delStockIn(id){
+  const s=stockIn.find(x=>x.id===id);
+  if(!confirm('Xoá "'+(s?.name||'')+' × '+(s?.qty||'')+'" khỏi hàng tự thêm? Số nhập kho sẽ bị trừ lại.'))return;
+  stockIn=stockIn.filter(x=>x.id!==id);
+  ULS.set('si',stockIn); sbAutoSync();
+  document.getElementById('sih-modal')?.remove();
+  renderInventory(document.getElementById('content'));
+  toast('Đã xoá','warning');
 }
 
 function renderCustTable(q){
@@ -7082,6 +7423,8 @@ function exportAllData(){
     tpl:  templates||[],
     ph:   priceHistory||[],
     oc:   outContracts||[],
+    so:   stockOut||[],
+    si:   stockIn||[],
     calc: calcState||null,
   };
   const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
@@ -7106,7 +7449,7 @@ function importAndMergeData(inp){
       if(!confirm('File này có thể không phải bản sao lưu của phần mềm. Vẫn thử gộp?')){ inp.value=''; return; }
     }
     // Gộp theo id/mã, không ghi đè mục đang có
-    const merged={qs:0,pqs:0,cat:0,cust:0,sup:0,ph:0,tpl:0,oc:0};
+    const merged={qs:0,pqs:0,cat:0,cust:0,sup:0,ph:0,tpl:0,oc:0,so:0,si:0};
 
     // Báo giá — gộp theo id (hoặc num nếu thiếu id)
     if(Array.isArray(data.qs)){
@@ -7148,11 +7491,21 @@ function importAndMergeData(inp){
       const seen=new Set((outContracts||[]).map(c=>c.id));
       data.oc.forEach(c=>{ if(c.id && !seen.has(c.id)){ outContracts.push(c); seen.add(c.id); merged.oc++; } });
     }
+    // Xuất kho — gộp theo id
+    if(Array.isArray(data.so)){
+      const seen=new Set((stockOut||[]).map(s=>s.id));
+      data.so.forEach(s=>{ if(s.id && !seen.has(s.id)){ stockOut.push(s); seen.add(s.id); merged.so++; } });
+    }
+    // Nhập kho thủ công — gộp theo id
+    if(Array.isArray(data.si)){
+      const seen=new Set((stockIn||[]).map(s=>s.id));
+      data.si.forEach(s=>{ if(s.id && !seen.has(s.id)){ stockIn.push(s); seen.add(s.id); merged.si++; } });
+    }
 
     // Lưu lại + đồng bộ lên kho chung
     ULS.set('qs',quotes); ULS.set('pqs',projects); ULS.set('cat',catalog);
     ULS.set('cust',customers); ULS.set('sup',suppliers); ULS.set('ph',priceHistory);
-    ULS.set('tpl',templates); ULS.set('oc',outContracts);
+    ULS.set('tpl',templates); ULS.set('oc',outContracts); ULS.set('so',stockOut); ULS.set('si',stockIn);
     sbAutoSync();
     inp.value='';
 
