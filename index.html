@@ -5165,6 +5165,7 @@ function refreshInvBody(){
 
 function invRowHtml(m){
   const sc=m.stock<=0?'#A32D2D':m.stock<=2?'#B8860B':'#3B6D11';
+  const canEdit=(m.stockInIds&&m.stockInIds.length===1); // sửa trực tiếp khi chỉ có 1 bản ghi tự thêm
   return `<tr>
     <td style="font-weight:600">${esc(m.name)}</td>
     <td style="color:var(--accent2);font-weight:600">${esc(m.code)}</td>
@@ -5174,7 +5175,10 @@ function invRowHtml(m){
     <td style="text-align:center;font-weight:600">${m.inQty}</td>
     <td style="text-align:center;color:var(--text2)">${m.outQty}</td>
     <td style="text-align:center;font-weight:800;font-size:15px;color:${sc}">${m.stock}</td>
-    <td><button class="btn btn-g" style="font-size:11px;padding:4px 9px" onclick="openStockOutModal('${esc(m.key)}')" title="Ghi nhận xuất kho">📤 Xuất</button></td>
+    <td style="white-space:nowrap">
+      ${canEdit?`<button class="btn btn-g" style="font-size:11px;padding:4px 8px" onclick="openStockInModal('${m.stockInIds[0]}')" title="Sửa hàng tự thêm">✏️</button> `:''}
+      <button class="btn btn-g" style="font-size:11px;padding:4px 9px" onclick="openStockOutModal('${esc(m.key)}')" title="Ghi nhận xuất kho">📤 Xuất</button>
+    </td>
   </tr>`;
 }
 
@@ -5203,8 +5207,10 @@ function computeInventory(){
   // 1b. Nhập kho THỦ CÔNG (hàng chưa có đơn mua / chưa kịp nhập dữ liệu)
   (stockIn||[]).forEach(s=>{
     const k=invKey(s.name,s.code); if(!k) return;
-    if(!map[k]) map[k]={key:k,name:s.name||'',code:s.code||'',brand:'',inQty:0,outQty:0,contracts:new Set(),projects:new Set(),lastDate:null};
+    if(!map[k]) map[k]={key:k,name:s.name||'',code:s.code||'',brand:'',inQty:0,outQty:0,contracts:new Set(),projects:new Set(),lastDate:null,stockInIds:[]};
     const m=map[k];
+    if(!m.stockInIds) m.stockInIds=[];
+    m.stockInIds.push(s.id);
     m.inQty += (+s.qty||0);
     if(s.contractNo) m.contracts.add(s.contractNo);
     if(s.project) m.projects.add(s.project);
@@ -5225,6 +5231,7 @@ function computeInventory(){
     ...m,
     contracts:[...m.contracts],
     projects:[...m.projects],
+    stockInIds:m.stockInIds||[],
     stock:m.inQty-m.outQty,
   })).sort((a,b)=>a.name.localeCompare(b.name,'vi'));
 }
@@ -5329,35 +5336,37 @@ function exportInventoryExcel(){
 }
 
 // ── NHẬP KHO THỦ CÔNG (hàng chưa có đơn mua / chưa kịp nhập) ──
-function openStockInModal(){
+function openStockInModal(id){
+  const s = id ? stockIn.find(x=>x.id===id) : null;
+  const isEdit=!!s;
   const old=document.getElementById('si-modal'); if(old)old.remove();
   const el=document.createElement('div');
   el.id='si-modal';
   el.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:24px 16px;overflow:auto';
   el.innerHTML=`
     <div style="background:var(--panel);border-radius:14px;padding:22px;max-width:520px;width:100%;margin:auto">
-      <div style="font-size:16px;font-weight:700;margin-bottom:4px;color:var(--text)">➕ Tự thêm hàng vào kho</div>
+      <div style="font-size:16px;font-weight:700;margin-bottom:4px;color:var(--text)">${isEdit?'✏️ Sửa hàng trong kho':'➕ Tự thêm hàng vào kho'}</div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Dùng cho hàng nhập về nhưng chưa có đơn mua, hoặc chưa kịp nhập dữ liệu. Có thể bổ sung đơn mua sau — hệ thống cộng dồn số nhập.</div>
       <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-bottom:12px">
         <div><label class="lbl">Tên hàng hóa <span style="color:var(--danger)">*</span></label>
-          <input class="inp" id="si-name" list="si-name-list" placeholder="Tên thiết bị" oninput="siFillFromCatalog(this)" style="width:100%">
+          <input class="inp" id="si-name" list="si-name-list" value="${esc(s?.name||'')}" placeholder="Tên thiết bị" oninput="siFillFromCatalog(this)" style="width:100%">
           <datalist id="si-name-list">${catalog.map(c=>`<option value="${esc(c.name)}">`).join('')}</datalist>
         </div>
-        <div><label class="lbl">Mã hàng</label><input class="inp" id="si-code" placeholder="Mã" style="width:100%"></div>
+        <div><label class="lbl">Mã hàng</label><input class="inp" id="si-code" value="${esc(s?.code||'')}" placeholder="Mã" style="width:100%"></div>
       </div>
       <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-bottom:12px">
-        <div><label class="lbl">Hãng sản xuất</label><input class="inp" id="si-brand" placeholder="VD: Endress+Hauser - Đức" style="width:100%"></div>
-        <div><label class="lbl">Số lượng nhập <span style="color:var(--danger)">*</span></label><input class="inp" id="si-qty" type="number" min="1" value="1" style="width:100%"></div>
+        <div><label class="lbl">Hãng sản xuất</label><input class="inp" id="si-brand" value="${esc(s?.brand||'')}" placeholder="VD: Endress+Hauser - Đức" style="width:100%"></div>
+        <div><label class="lbl">Số lượng nhập <span style="color:var(--danger)">*</span></label><input class="inp" id="si-qty" type="number" min="1" value="${s?.qty||1}" style="width:100%"></div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
-        <div><label class="lbl">Số HĐ / Đơn (nếu có)</label><input class="inp" id="si-contract" placeholder="VD: PO-2026-030" style="width:100%"></div>
-        <div><label class="lbl">Ngày nhập</label><input class="inp" id="si-date" type="date" value="${new Date().toISOString().slice(0,10)}" style="width:100%"></div>
+        <div><label class="lbl">Số HĐ / Đơn (nếu có)</label><input class="inp" id="si-contract" value="${esc(s?.contractNo||'')}" placeholder="VD: PO-2026-030" style="width:100%"></div>
+        <div><label class="lbl">Ngày nhập</label><input class="inp" id="si-date" type="date" value="${s?.date? s.date.slice(0,10) : new Date().toISOString().slice(0,10)}" style="width:100%"></div>
       </div>
-      <div style="margin-bottom:12px"><label class="lbl">Dự án / HĐ / Kho</label><input class="inp" id="si-project" placeholder="VD: Stock kho, Dự án Long An..." style="width:100%"></div>
-      <div style="margin-bottom:4px"><label class="lbl">Ghi chú</label><input class="inp" id="si-note" placeholder="VD: hàng mẫu, hàng tồn cũ..." style="width:100%"></div>
+      <div style="margin-bottom:12px"><label class="lbl">Dự án / HĐ / Kho</label><input class="inp" id="si-project" value="${esc(s?.project||'')}" placeholder="VD: Stock kho, Dự án Long An..." style="width:100%"></div>
+      <div style="margin-bottom:4px"><label class="lbl">Ghi chú</label><input class="inp" id="si-note" value="${esc(s?.note||'')}" placeholder="VD: hàng mẫu, hàng tồn cũ..." style="width:100%"></div>
       <div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end">
         <button class="btn btn-g" onclick="document.getElementById('si-modal').remove()">Huỷ</button>
-        <button class="btn btn-p" onclick="saveStockIn()">💾 Thêm vào kho</button>
+        <button class="btn btn-p" onclick="saveStockIn(${isEdit?`'${s.id}'`:'null'})">${isEdit?'💾 Lưu thay đổi':'💾 Thêm vào kho'}</button>
       </div>
     </div>`;
   document.body.appendChild(el);
@@ -5375,13 +5384,12 @@ function siFillFromCatalog(inp){
   }
 }
 
-function saveStockIn(){
+function saveStockIn(id){
   const name=(document.getElementById('si-name')?.value||'').trim();
   if(!name){toast('Vui lòng nhập tên hàng hóa','error');return;}
   const qty=parseInt(document.getElementById('si-qty')?.value||'0')||0;
   if(qty<=0){toast('Số lượng nhập phải lớn hơn 0','error');return;}
-  stockIn.unshift({
-    id:'si'+Date.now()+Math.floor(Math.random()*1000),
+  const data={
     name,
     code:(document.getElementById('si-code')?.value||'').trim(),
     brand:(document.getElementById('si-brand')?.value||'').trim(),
@@ -5390,14 +5398,24 @@ function saveStockIn(){
     date:document.getElementById('si-date')?.value||new Date().toISOString().slice(0,10),
     project:(document.getElementById('si-project')?.value||'').trim(),
     note:(document.getElementById('si-note')?.value||'').trim(),
-    createdBy:LS.get('bgpro:displayName')||currentUser||'',
-    createdAt:new Date().toISOString(),
-  });
+  };
+  if(id){
+    const i=stockIn.findIndex(x=>x.id===id);
+    if(i>=0) stockIn[i]={...stockIn[i],...data};
+    logAction('Sửa hàng trong kho', name, 'SL: '+qty);
+  }else{
+    data.id='si'+Date.now()+Math.floor(Math.random()*1000);
+    data.createdBy=LS.get('bgpro:displayName')||currentUser||'';
+    data.createdAt=new Date().toISOString();
+    stockIn.unshift(data);
+    logAction('Nhập kho thủ công', name, 'SL: '+qty);
+  }
   ULS.set('si',stockIn); sbAutoSync();
   document.getElementById('si-modal')?.remove();
+  // Nếu đang mở lịch sử hàng tự thêm thì cập nhật lại
+  if(document.getElementById('sih-modal')) openStockInHistory();
   renderInventory(document.getElementById('content'));
-  toast('Đã thêm vào kho','success', name+' × '+qty);
-  logAction('Nhập kho thủ công', name, 'SL: '+qty);
+  toast(id?'Đã lưu thay đổi':'Đã thêm vào kho','success', name+' × '+qty);
 }
 
 function openStockInHistory(){
@@ -5423,7 +5441,7 @@ function openStockInHistory(){
           <td style="text-align:center;font-weight:700">${s.qty}</td>
           <td>${esc(s.contractNo||'—')}</td>
           <td>${esc(s.project||'—')}</td>
-          <td><button class="btn btn-danger" style="font-size:10px;padding:2px 7px" onclick="delStockIn('${s.id}')">🗑</button></td>
+          <td><button class="btn btn-g" style="font-size:10px;padding:2px 7px" onclick="openStockInModal('${s.id}')" title="Sửa">✏️</button> <button class="btn btn-danger" style="font-size:10px;padding:2px 7px" onclick="delStockIn('${s.id}')" title="Xoá">🗑</button></td>
         </tr>`).join('')}</tbody>
       </table></div>`:`<div style="text-align:center;color:var(--muted);padding:30px 0">Chưa có hàng tự thêm nào.</div>`}
     </div>`;
