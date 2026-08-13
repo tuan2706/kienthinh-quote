@@ -1888,6 +1888,15 @@ document.addEventListener('click', e=>{
   }
 });
 
+// Giữ focus + vị trí con trỏ ở ô tìm kiếm sau khi vẽ lại danh sách
+function keepSearchFocus(inputId, renderFn){
+  const el=document.getElementById(inputId);
+  const pos=el?el.selectionStart:null;
+  renderFn();
+  const el2=document.getElementById(inputId);
+  if(el2){ el2.focus(); if(pos!=null){ try{el2.setSelectionRange(pos,pos);}catch(e){} } }
+}
+
 function goPage(p){
   // Phân quyền: vai trò "Chỉ xem" không được tạo/sửa báo giá
   if((p==='new'||p==='editor') && !canEdit()){
@@ -4835,7 +4844,7 @@ function renderOutContracts(el){
     <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Mỗi bản ghi là một <b>hợp đồng bán cho khách hàng</b>. Quản lý giá mua vào &amp; giá bán ra từng mặt hàng, hàng cấp cho dự án nào, và lợi nhuận.</div>
     <div class="abar" style="margin-bottom:12px">
       <button class="btn btn-p" onclick="openOCModal()">➕ Tạo hợp đồng</button>
-      <input class="inp" id="oc-q" value="${esc(_ocSearch)}" placeholder="🔍  Tìm theo khách hàng, số HĐ, tên/mã hàng, dự án..." oninput="_ocSearch=this.value;renderOutContracts(document.getElementById('cust-tab-body'))" style="max-width:380px;flex:1">
+      <input class="inp" id="oc-q" value="${esc(_ocSearch)}" placeholder="🔍  Tìm theo khách hàng, số HĐ, tên/mã hàng, dự án..." oninput="_ocSearch=this.value;keepSearchFocus('oc-q',()=>renderOutContracts(document.getElementById('cust-tab-body')))" style="max-width:380px;flex:1">
       ${totalC?`<button class="btn btn-g" onclick="exportOCExcel()">📤 Export Excel</button>`:''}
     </div>
     ${totalC?`<div class="cat-stats">
@@ -5054,6 +5063,121 @@ function exportOCExcel(){
 // Xuất kho = tổng SL các lần xuất thủ công (stockOut).
 // Tồn = Nhập − Xuất.
 let _invSearch='';
+let _invProject=''; // lọc theo dự án/kho ('' = tất cả)
+let _invSort='project'; // 'project' | 'name' | 'stock'
+
+function renderInventory(el){
+  const inv=computeInventory();
+  const totalItems=inv.length;
+  const totalStock=inv.reduce((s,m)=>s+Math.max(0,m.stock),0);
+  const outOfStock=inv.filter(m=>m.stock<=0).length;
+  const lowStock=inv.filter(m=>m.stock>0 && m.stock<=2).length;
+  // Danh sách dự án/kho để lọc
+  const allProjects=[...new Set(inv.flatMap(m=>m.projects))].sort((a,b)=>a.localeCompare(b,'vi'));
+
+  el.innerHTML=`
+  <div class="card">
+    <div class="card-title">📦 Hàng tồn kho</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Tự động tổng hợp từ <b>đơn mua</b> (mặt hàng có ghi ô Dự án/HĐ/Kho) làm số <b>nhập kho</b>. Bạn nhập tay số <b>xuất kho</b> khi giao hàng. <b>Tồn = Nhập − Xuất</b>.</div>
+    <div class="abar" style="margin-bottom:10px">
+      <button class="btn btn-p" onclick="openStockInModal()">➕ Tự thêm hàng vào kho</button>
+      <input class="inp" id="inv-q" value="${esc(_invSearch)}" placeholder="🔍  Tìm theo tên, mã hàng, dự án, số HĐ..." oninput="_invSearch=this.value;refreshInvBody()" style="max-width:320px;flex:1">
+      ${totalItems?`<button class="btn btn-g" onclick="exportInventoryExcel()">📤 Export Excel</button>`:''}
+    </div>
+    ${totalItems?`
+    <div class="abar" style="margin-bottom:12px;gap:8px">
+      <span style="font-size:12px;color:var(--text2);align-self:center">🗂 Lọc dự án/kho:</span>
+      <select class="inp" id="inv-project" onchange="_invProject=this.value;refreshInvBody()" style="max-width:240px;font-size:13px">
+        <option value=""${_invProject===''?' selected':''}>— Tất cả —</option>
+        ${allProjects.map(p=>`<option value="${esc(p)}"${_invProject===p?' selected':''}>${esc(p)}</option>`).join('')}
+      </select>
+      <span style="font-size:12px;color:var(--text2);align-self:center;margin-left:6px">↕ Sắp xếp:</span>
+      <select class="inp" id="inv-sort" onchange="_invSort=this.value;refreshInvBody()" style="max-width:190px;font-size:13px">
+        <option value="project"${_invSort==='project'?' selected':''}>Theo Dự án / Kho</option>
+        <option value="name"${_invSort==='name'?' selected':''}>Theo Tên hàng</option>
+        <option value="stock"${_invSort==='stock'?' selected':''}>Theo Tồn (ít → nhiều)</option>
+      </select>
+    </div>
+    <div class="cat-stats">
+      <div class="cat-stat"><b>${totalItems}</b>Mặt hàng</div>
+      <div class="cat-stat"><b>${totalStock.toLocaleString('vi-VN')}</b>Tổng tồn</div>
+      ${lowStock?`<div class="cat-stat" style="color:#B8860B"><b>${lowStock}</b>Sắp hết (≤2)</div>`:''}
+      ${outOfStock?`<div class="cat-stat" style="color:#A32D2D"><b>${outOfStock}</b>Hết hàng</div>`:''}
+    </div>
+    <div id="inv-body"></div>
+    <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-g" onclick="openStockInHistory()">📋 Hàng tự thêm</button><button class="btn btn-g" onclick="openStockOutHistory()">📋 Lịch sử xuất kho</button></div>
+    `:`
+    <div class="empty-state">
+      <div class="empty-state-icon">📦</div>
+      <div class="empty-state-title">Chưa có hàng tồn kho</div>
+      <div class="empty-state-desc">Hàng tồn kho tự động tổng hợp từ các <b>đơn mua</b> có ghi ô <b>Dự án/HĐ/Kho</b>.<br>Vào <b>Nhà cung cấp → Lịch sử giá đầu vào → Tạo đơn mua</b>, nhập mặt hàng và điền ô Dự án/HĐ/Kho để hàng hiện ở đây.<br>Hoặc <b>tự thêm hàng</b> vào kho cho những mặt hàng chưa có đơn mua.</div>
+      <button class="btn btn-p" style="margin-top:10px" onclick="openStockInModal()">➕ Tự thêm hàng vào kho</button>
+    </div>`}
+  </div>`;
+  if(totalItems) refreshInvBody();
+}
+
+// Chỉ vẽ lại phần bảng (không đụng ô tìm kiếm → không mất focus)
+function refreshInvBody(){
+  const body=document.getElementById('inv-body');
+  if(!body) return;
+  let inv=computeInventory();
+  const kw=stripVN(_invSearch||'');
+  if(kw) inv=inv.filter(m=>stripVN(m.name).includes(kw)||stripVN(m.code).includes(kw)||m.projects.some(p=>stripVN(p).includes(kw))||m.contracts.some(c=>stripVN(c).includes(kw)));
+  if(_invProject) inv=inv.filter(m=>m.projects.includes(_invProject));
+  // Sắp xếp
+  if(_invSort==='name') inv.sort((a,b)=>a.name.localeCompare(b.name,'vi'));
+  else if(_invSort==='stock') inv.sort((a,b)=>a.stock-b.stock);
+  else inv.sort((a,b)=>{ // theo dự án/kho, rồi tên
+    const pa=(a.projects[0]||'zzz'), pb=(b.projects[0]||'zzz');
+    return pa.localeCompare(pb,'vi') || a.name.localeCompare(b.name,'vi');
+  });
+
+  if(!inv.length){
+    body.innerHTML=`<div style="text-align:center;color:var(--muted);padding:30px 0">Không tìm thấy mặt hàng phù hợp với bộ lọc.</div>`;
+    return;
+  }
+
+  // Khi sắp xếp theo dự án/kho: nhóm có tiêu đề nhóm
+  let rowsHtml='';
+  if(_invSort==='project'){
+    const groups={};
+    inv.forEach(m=>{ const g=m.projects[0]||'(Chưa gắn dự án/kho)'; (groups[g]=groups[g]||[]).push(m); });
+    Object.keys(groups).sort((a,b)=>a.localeCompare(b,'vi')).forEach(g=>{
+      const gStock=groups[g].reduce((s,m)=>s+Math.max(0,m.stock),0);
+      rowsHtml+=`<tr><td colspan="9" style="background:var(--pc,#1B5E20);color:#fff;font-weight:700;font-size:12px;padding:7px 11px">🗂 ${esc(g)} <span style="opacity:.8;font-weight:400">· ${groups[g].length} mặt hàng · tồn ${gStock}</span></td></tr>`;
+      rowsHtml+=groups[g].map(m=>invRowHtml(m)).join('');
+    });
+  }else{
+    rowsHtml=inv.map(m=>invRowHtml(m)).join('');
+  }
+
+  body.innerHTML=`<div class="cat-table-wrap">
+    <table class="cat-table">
+      <thead><tr>
+        <th>Tên hàng hóa</th><th>Mã</th><th>Hãng SX</th><th>Số HĐ nhập</th><th>Dự án / Kho</th>
+        <th style="text-align:center">Nhập</th><th style="text-align:center">Xuất</th><th style="text-align:center">Tồn</th><th></th>
+      </tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+  </div>`;
+}
+
+function invRowHtml(m){
+  const sc=m.stock<=0?'#A32D2D':m.stock<=2?'#B8860B':'#3B6D11';
+  return `<tr>
+    <td style="font-weight:600">${esc(m.name)}</td>
+    <td style="color:var(--accent2);font-weight:600">${esc(m.code)}</td>
+    <td style="color:var(--text2);font-size:12px">${esc(m.brand||'—')}</td>
+    <td style="font-size:12px">${m.contracts.length?m.contracts.map(c=>`<span style="background:var(--bg2);padding:1px 7px;border-radius:20px;margin:1px;display:inline-block">${esc(c)}</span>`).join(' '):'<span style="color:var(--text3)">—</span>'}</td>
+    <td style="font-size:12px">${m.projects.length?m.projects.map(p=>`<span style="background:var(--bg2);padding:1px 7px;border-radius:20px;margin:1px;display:inline-block">${esc(p)}</span>`).join(' '):'<span style="color:var(--text3)">—</span>'}</td>
+    <td style="text-align:center;font-weight:600">${m.inQty}</td>
+    <td style="text-align:center;color:var(--text2)">${m.outQty}</td>
+    <td style="text-align:center;font-weight:800;font-size:15px;color:${sc}">${m.stock}</td>
+    <td><button class="btn btn-g" style="font-size:11px;padding:4px 9px" onclick="openStockOutModal('${esc(m.key)}')" title="Ghi nhận xuất kho">📤 Xuất</button></td>
+  </tr>`;
+}
+
 function invKey(name,code){ return stripVN(code||'') || stripVN(name||''); }
 
 // Tổng hợp tồn kho theo từng mặt hàng
@@ -5103,64 +5227,6 @@ function computeInventory(){
     projects:[...m.projects],
     stock:m.inQty-m.outQty,
   })).sort((a,b)=>a.name.localeCompare(b.name,'vi'));
-}
-
-function renderInventory(el){
-  const inv=computeInventory();
-  const kw=stripVN(_invSearch||'');
-  const list=kw?inv.filter(m=>stripVN(m.name).includes(kw)||stripVN(m.code).includes(kw)||m.projects.some(p=>stripVN(p).includes(kw))||m.contracts.some(c=>stripVN(c).includes(kw))):inv;
-  const totalItems=inv.length;
-  const totalStock=inv.reduce((s,m)=>s+Math.max(0,m.stock),0);
-  const outOfStock=inv.filter(m=>m.stock<=0).length;
-  const lowStock=inv.filter(m=>m.stock>0 && m.stock<=2).length;
-
-  el.innerHTML=`
-  <div class="card">
-    <div class="card-title">📦 Hàng tồn kho</div>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Tự động tổng hợp từ <b>đơn mua</b> (mặt hàng có ghi ô Dự án/HĐ/Kho) làm số <b>nhập kho</b>. Bạn nhập tay số <b>xuất kho</b> khi giao hàng. <b>Tồn = Nhập − Xuất</b>.</div>
-    <div class="abar" style="margin-bottom:12px">
-      <button class="btn btn-p" onclick="openStockInModal()">➕ Tự thêm hàng vào kho</button>
-      <input class="inp" id="inv-q" value="${esc(_invSearch)}" placeholder="🔍  Tìm theo tên, mã hàng, dự án, số HĐ..." oninput="_invSearch=this.value;renderInventory(document.getElementById('content'))" style="max-width:340px;flex:1">
-      ${totalItems?`<button class="btn btn-g" onclick="exportInventoryExcel()">📤 Export Excel</button>`:''}
-    </div>
-    ${totalItems?`<div class="cat-stats">
-      <div class="cat-stat"><b>${totalItems}</b>Mặt hàng</div>
-      <div class="cat-stat"><b>${totalStock.toLocaleString('vi-VN')}</b>Tổng tồn</div>
-      ${lowStock?`<div class="cat-stat" style="color:#B8860B"><b>${lowStock}</b>Sắp hết (≤2)</div>`:''}
-      ${outOfStock?`<div class="cat-stat" style="color:#A32D2D"><b>${outOfStock}</b>Hết hàng</div>`:''}
-    </div>`:''}
-    ${list.length?`
-    <div class="cat-table-wrap">
-      <table class="cat-table">
-        <thead><tr>
-          <th>Tên hàng hóa</th><th>Mã</th><th>Hãng SX</th><th>Số HĐ nhập</th><th>Dự án / Kho</th>
-          <th style="text-align:center">Nhập</th><th style="text-align:center">Xuất</th><th style="text-align:center">Tồn</th><th></th>
-        </tr></thead>
-        <tbody>${list.map(m=>{
-          const sc=m.stock<=0?'#A32D2D':m.stock<=2?'#B8860B':'#3B6D11';
-          return `<tr>
-            <td style="font-weight:600">${esc(m.name)}</td>
-            <td style="color:var(--accent2);font-weight:600">${esc(m.code)}</td>
-            <td style="color:var(--text2);font-size:12px">${esc(m.brand||'—')}</td>
-            <td style="font-size:12px">${m.contracts.length?m.contracts.map(c=>`<span style="background:var(--bg2);padding:1px 7px;border-radius:20px;margin:1px;display:inline-block">${esc(c)}</span>`).join(' '):'<span style="color:var(--text3)">—</span>'}</td>
-            <td style="font-size:12px">${m.projects.length?m.projects.map(p=>`<span style="background:var(--bg2);padding:1px 7px;border-radius:20px;margin:1px;display:inline-block">${esc(p)}</span>`).join(' '):'<span style="color:var(--text3)">—</span>'}</td>
-            <td style="text-align:center;font-weight:600">${m.inQty}</td>
-            <td style="text-align:center;color:var(--text2)">${m.outQty}</td>
-            <td style="text-align:center;font-weight:800;font-size:15px;color:${sc}">${m.stock}</td>
-            <td><button class="btn btn-g" style="font-size:11px;padding:4px 9px" onclick="openStockOutModal('${esc(m.key)}')" title="Ghi nhận xuất kho">📤 Xuất</button></td>
-          </tr>`;
-        }).join('')}</tbody>
-      </table>
-    </div>
-    <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-g" onclick="openStockInHistory()">📋 Hàng tự thêm</button><button class="btn btn-g" onclick="openStockOutHistory()">📋 Lịch sử xuất kho</button></div>
-    `:`
-    <div class="empty-state">
-      <div class="empty-state-icon">📦</div>
-      <div class="empty-state-title">${totalItems?'Không tìm thấy mặt hàng phù hợp':'Chưa có hàng tồn kho'}</div>
-      <div class="empty-state-desc">Hàng tồn kho tự động tổng hợp từ các <b>đơn mua</b> có ghi ô <b>Dự án/HĐ/Kho</b>.<br>Vào <b>Nhà cung cấp → Lịch sử giá đầu vào → Tạo đơn mua</b>, nhập mặt hàng và điền ô Dự án/HĐ/Kho để hàng hiện ở đây.<br>Hoặc <b>tự thêm hàng</b> vào kho cho những mặt hàng chưa có đơn mua.</div>
-      <button class="btn btn-p" style="margin-top:10px" onclick="openStockInModal()">➕ Tự thêm hàng vào kho</button>
-    </div>`}
-  </div>`;
 }
 
 function openStockOutModal(key){
@@ -5809,7 +5875,7 @@ function renderPriceHistory(el){
     <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Mỗi bản ghi là một <b>đơn mua / hợp đồng</b> từ nhà cung cấp, chứa nhiều mặt hàng. Dùng để tra cứu và so sánh giá đầu vào qua thời gian.</div>
     <div class="abar" style="margin-bottom:12px">
       <button class="btn btn-p" onclick="openPriceModal()">➕ Tạo đơn mua</button>
-      <input class="inp" id="ph-q" value="${esc(_phSearch)}" placeholder="🔍  Tìm theo nhà cung cấp, số HĐ, tên/mã hàng..." oninput="_phSearch=this.value;renderPriceHistory(document.getElementById('sup-tab-body'))" style="max-width:380px;flex:1">
+      <input class="inp" id="ph-q" value="${esc(_phSearch)}" placeholder="🔍  Tìm theo nhà cung cấp, số HĐ, tên/mã hàng..." oninput="_phSearch=this.value;keepSearchFocus('ph-q',()=>renderPriceHistory(document.getElementById('sup-tab-body')))" style="max-width:380px;flex:1">
       ${totalOrders?`<button class="btn btn-g" onclick="exportPriceHistoryExcel()">📤 Export Excel</button>`:''}
     </div>
     ${totalOrders?`<div class="cat-stats">
