@@ -3435,7 +3435,12 @@ function renderProjectEditor(el){
         <span style="background:var(--accent);color:#fff;border-radius:6px;padding:2px 8px;font-size:10px;min-width:20px;text-align:center">${['I','II','III','IV','V','VI','VII','VIII'][gi]||gi+1}</span>
         <input style="background:transparent;border:none;outline:none;color:var(--accent2);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;flex:1"
           value="${esc(g.name)}" oninput="cpq.groups[${gi}].name=this.value">
-        <span style="color:var(--accent2);font-weight:700;font-size:12px;margin-right:8px">${fm(g.gAfter,'VND')}</span>
+        <button class="btn ${g.secBold!==false?'btn-p':'btn-g'}" style="padding:2px 7px;font-weight:800;font-size:11px" onclick="pqSecToggle(${gi},'secBold',this)" title="In đậm">B</button>
+        <button class="btn ${g.secItalic?'btn-p':'btn-g'}" style="padding:2px 7px;font-style:italic;font-size:11px" onclick="pqSecToggle(${gi},'secItalic',this)" title="In nghiêng">I</button>
+        <button class="btn ${g.secUnderline?'btn-p':'btn-g'}" style="padding:2px 7px;text-decoration:underline;font-size:11px" onclick="pqSecToggle(${gi},'secUnderline',this)" title="Gạch chân">U</button>
+        <button class="btn ${g.secUpper!==false?'btn-p':'btn-g'}" style="padding:2px 7px;font-size:11px;font-weight:700" onclick="pqSecToggle(${gi},'secUpper',this)" title="IN HOA">AA</button>
+        <input type="color" value="${g.secColor||'#ffffff'}" onchange="cpq.groups[${gi}].secColor=this.value" title="Màu chữ tiêu đề nhóm" style="width:28px;height:26px;border:1px solid var(--border);border-radius:5px;cursor:pointer;padding:1px;vertical-align:middle">
+        <span style="color:var(--accent2);font-weight:700;font-size:12px;margin:0 8px">${fm(g.gAfter,'VND')}</span>
         <button class="btn btn-danger" style="font-size:10px;padding:2px 7px;opacity:0.7" 
           title="Xóa nhóm này"
           onclick="deletePQGroup(${gi})" 
@@ -3549,6 +3554,16 @@ function renderProjectEditor(el){
 
   // Init textarea auto-height
   requestAnimationFrame(()=>initAutoH());
+}
+
+// Bật/tắt định dạng tiêu đề nhóm báo giá dự án
+function pqSecToggle(gi,field,btn){
+  if(!cpq||!cpq.groups[gi])return;
+  const g=cpq.groups[gi];
+  // Mặc định: secBold và secUpper là true (nếu chưa set)
+  const cur = (field==='secBold'||field==='secUpper') ? (g[field]!==false) : (!!g[field]);
+  g[field]=!cur;
+  if(btn){ btn.classList.toggle('btn-p',!!g[field]); btn.classList.toggle('btn-g',!g[field]); }
 }
 
 function addPQGroup(){
@@ -3714,7 +3729,16 @@ function exportProjectPDF(id){
 
   // Các dòng bảng: mỗi nhóm có 1 dòng tiêu đề nhóm + các item + dòng tổng nhóm
   const bodyRows = calc.groups.filter(grp=>(grp.items||[]).length).map((grp,gi)=>{
-    const head = `<tr class="grp-row"><td colspan="9">${groupRoman[gi]||gi+1}. ${esc(grp.name||'')}</td></tr>`;
+    // Định dạng tiêu đề nhóm (đậm/nghiêng/gạch chân/hoa + màu) — mặc định đậm + hoa
+    let gname = grp.name||'';
+    const gUpper = grp.secUpper!==false;
+    if(gUpper) gname = gname.toUpperCase();
+    let gcss = '';
+    gcss += (grp.secBold!==false) ? 'font-weight:800;' : 'font-weight:500;';
+    if(grp.secItalic) gcss += 'font-style:italic;';
+    if(grp.secUnderline) gcss += 'text-decoration:underline;';
+    if(grp.secColor && grp.secColor!=='#ffffff') gcss += 'color:'+grp.secColor+';';
+    const head = `<tr class="grp-row"><td colspan="9" style="${gcss}">${groupRoman[gi]||gi+1}. ${esc(gname)}</td></tr>`;
     const rows = grp.items.map((it,ii)=>{
       const itemVatPct = it.vatPct!==undefined ? it.vatPct : vat;
       const nm = (it.name||'').split('\n');
@@ -3875,6 +3899,7 @@ function exportProjectPDF(id){
   .pb-primary{background:var(--pc);color:#fff;}.pb-ghost{background:#fff;color:#555;border:1.5px solid #ccc;}
   .pdf-watermark{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:56%;max-width:420px;opacity:.05;z-index:0;pointer-events:none;}
   .page{position:relative;z-index:1;}
+  @media print{ .pbar,.no-print{display:none!important;} }
   </style></head><body>
   <div class="pbar no-print">
     <button class="pbtn pb-primary" onclick="window.print()">🖨 In / Lưu PDF (Ctrl+P)</button>
@@ -8391,7 +8416,7 @@ body{font-family:Arial,Helvetica,'Segoe UI',sans-serif;font-size:10.5pt;font-wei
 .term-full .tc-body{flex:1;}
 .term-full p{color:#1c2530;font-size:9.5pt;font-weight:400;line-height:1.8;white-space:pre-line;margin:0;}
 
-.qnotes{background:#fffdf4;border:1px solid #efe6c8;border-left:3px solid var(--pc2);border-radius:0 7px 7px 0;padding:12px 17px;font-size:9.5pt;color:#1c2530;line-height:1.65;margin-bottom:16px;}
+.qnotes{background:#fffdf4;border:1px solid #efe6c8;border-left:3px solid var(--pc2);border-radius:0 7px 7px 0;padding:12px 17px;font-size:9.5pt;color:#1c2530;line-height:1.65;margin-bottom:16px;white-space:pre-line;}
 .qnotes strong{display:block;font-size:8pt;text-transform:uppercase;letter-spacing:1px;color:var(--pc2b);font-weight:700;margin-bottom:5px;}
 
 /* ── SIGNATURE ── */
