@@ -1750,7 +1750,8 @@ const tod=()=>new Date().toISOString().split('T')[0];
 const dl=d=>{const t=new Date();t.setDate(t.getDate()+d);return t.toISOString().split('T')[0];};
 const nqn=()=>'BG-'+new Date().getFullYear()+'-'+String(Math.floor(Math.random()*900)+100);
 const ct=(items,dp,vp)=>{
-  const arr=Array.isArray(items)?items:[];
+  // Bỏ qua dòng nhóm (isSection) khi tính tiền
+  const arr=(Array.isArray(items)?items:[]).filter(i=>!i.isSection);
   const s=arr.reduce((a,i)=>a+((+i.qty||0)*(+i.price||0)),0);
   const da=s*dp/100;              // tiền chiết khấu
   const ad=s-da;                  // sau chiết khấu
@@ -1862,7 +1863,7 @@ const bq=()=>({
   customerId:null,createdBy:LS.get('bgpro:displayName')||currentUser||'',
   clientName:'',clientContact:'',clientPhone:'',clientAddr:'',clientEmail:'',
   bankName:company.bankName||'',bankBranch:company.bankBranch||'',bankHolder:company.bankHolder||'',bankAcct:company.bankAcct||'',
-  signedBy:company.contact||'',signedTitle:'',
+  signedBy:company.contact||'',signedTitle:'',approvedBy:'',approvedTitle:'',
   items:[{id:Date.now(),name:'',code:'',brand:'',unit:'',qty:1,price:0,specs:''}],
   status:'draft',createdAt:new Date().toISOString(),
   deliveryTimeOption:'',deliveryTimeCustom:'',
@@ -2077,7 +2078,7 @@ function renderDash(el){
   <div id="dash-table-view">
     <div class="card" style="padding:0;overflow:hidden">
       <table class="dt"><thead><tr>
-        <th>Số BG</th><th>Khách hàng</th><th>Ngày lập</th><th>Nơi giao</th><th>Giá trị</th><th>Trạng thái</th><th></th>
+        <th>Số BG</th><th>Khách hàng</th><th>Ngày lập</th><th>Nơi thực hiện</th><th>Giá trị</th><th>Trạng thái</th><th></th>
       </tr></thead><tbody id="dtb"></tbody></table>
     </div>
   </div>
@@ -2313,6 +2314,7 @@ function renderEditor(el){
         <button class="btn btn-g" onclick="openSaveTemplateModal()" title="Lưu danh sách hàng hóa hiện tại thành mẫu để dùng lại">💾 Lưu mẫu</button>
         <button class="btn btn-g" onclick="openAIAssistModal('rfq-summary',{})" title="Dán yêu cầu/email của khách để AI tóm tắt nhanh">✨ Tóm tắt RFQ</button>
         <button class="btn btn-p" onclick="ai()">＋ Thêm dòng</button>
+        <button class="btn btn-g" onclick="aiSection()" title="Thêm dòng phân nhóm (I, II, III...) như: Phần thiết bị, Phần dịch vụ...">＋ Thêm dòng nhóm (I, II, III)</button>
       </div>
     </div>
     <div style="overflow-x:auto">
@@ -2331,7 +2333,7 @@ function renderEditor(el){
       <div id="dp">${dPrev&&dPrev.tx?`<div class="pbox">${esc(dPrev.tx)}</div>`:''}${q.deliveryTimeOption==='x'?`<textarea class="ta" rows="3" style="margin-top:6px" oninput="cq.deliveryTimeCustom=this.value" placeholder="Nhập thời gian giao hàng...">${esc(q.deliveryTimeCustom)}</textarea>`:''}</div>
     </div>
     <div class="card">
-      <div class="card-title">📍 Nơi giao hàng</div>
+      <div class="card-title">📍 Nơi thực hiện</div>
       <label class="lbl">Tỉnh / Thành phố</label>
       <select class="sel" onchange="cq.deliveryLocation=this.value"><option value="">-- Chọn tỉnh / thành phố --</option>${pvOpts}</select>
       <div style="margin-top:10px"><label class="lbl">Địa chỉ chi tiết (tuỳ chọn)</label>
@@ -2381,8 +2383,12 @@ function renderEditor(el){
         <div class="fg"><label class="lbl">Chi nhánh</label><input class="inp" value="${esc(q.bankBranch||'')}" oninput="cq.bankBranch=this.value"></div>
       </div>
       <div class="fr">
-        <div class="fg"><label class="lbl">Người ký</label><input class="inp" value="${esc(q.signedBy||'')}" oninput="cq.signedBy=this.value"></div>
-        <div class="fg"><label class="lbl">Chức vụ</label><input class="inp" value="${esc(q.signedTitle||'')}" placeholder="Trưởng phòng KD" oninput="cq.signedTitle=this.value"></div>
+        <div class="fg"><label class="lbl">Người lập (ký)</label><input class="inp" value="${esc(q.signedBy||'')}" oninput="cq.signedBy=this.value"></div>
+        <div class="fg"><label class="lbl">Chức vụ người lập</label><input class="inp" value="${esc(q.signedTitle||'')}" placeholder="Kỹ sư kinh doanh" oninput="cq.signedTitle=this.value"></div>
+      </div>
+      <div class="fr">
+        <div class="fg"><label class="lbl">Người duyệt (sếp)</label><input class="inp" value="${esc(q.approvedBy||'')}" placeholder="Tên người duyệt/giám đốc" oninput="cq.approvedBy=this.value"></div>
+        <div class="fg"><label class="lbl">Chức vụ người duyệt</label><input class="inp" value="${esc(q.approvedTitle||'')}" placeholder="Giám đốc" oninput="cq.approvedTitle=this.value"></div>
       </div>
     </div>
   </div>
@@ -2501,12 +2507,36 @@ function ai(){
   if(inp){inp.focus();}
   initPriceInputs(tr);
 }
+// Thêm DÒNG NHÓM (tiêu đề phân nhóm La Mã: I, II, III...)
+function aiSection(){
+  // Tự đánh số La Mã theo số dòng nhóm đã có
+  const romans=['I','II','III','IV','V','VI','VII','VIII','IX','X','XI','XII'];
+  const cnt=cq.items.filter(x=>x.isSection).length;
+  const it={id:Date.now(), isSection:true, label:romans[cnt]||String(cnt+1), name:'',
+    secBold:true, secItalic:false, secUnderline:false, secUpper:true, secColor:'#B8901E'};
+  cq.items.push(it);
+  const cur=cq.currency||'VND';
+  const idx=cq.items.length-1;
+  const tbody=document.getElementById('ib');
+  const tmp=document.createElement('tbody');
+  tmp.innerHTML=buildItemRow(it,idx,cur);
+  const tr=tmp.firstChild;
+  tbody.appendChild(tr);
+  const inp=tr.querySelector('.sec-name-inp');
+  if(inp){inp.focus();}
+}
 function di(id){
   if(cq.items.length<=1)return;
   cq.items=cq.items.filter(i=>i.id!==id);
   document.getElementById('ir-'+id)?.remove();
   document.querySelectorAll('#ib tr').forEach((r,i)=>{r.firstElementChild.textContent=i+1;});
   const tb=document.getElementById('totbox');if(tb)tb.innerHTML=buildTH(ct(cq.items,cq.discPct,cq.vatPct),cq);
+}
+// Bật/tắt định dạng dòng nhóm (đậm/nghiêng/gạch chân/hoa)
+function secToggle(id,field,btn){
+  const it=cq.items.find(x=>x.id===id); if(!it)return;
+  it[field]=!it[field];
+  if(btn){ btn.classList.toggle('btn-p',!!it[field]); btn.classList.toggle('btn-g',!it[field]); }
 }
 
 // ── QUOTE TEMPLATE (mẫu báo giá) ──────────────────────────────
@@ -3498,7 +3528,7 @@ function renderProjectEditor(el){
       <div class="pq-conditions">
         <div><label class="lbl">Thời gian giao hàng</label>
           <textarea class="inp" rows="2" style="width:100%" oninput="cpq.conditions.delivery=this.value">${esc(pq.conditions?.delivery||'')}</textarea></div>
-        <div><label class="lbl">Nơi giao hàng</label>
+        <div><label class="lbl">Nơi thực hiện</label>
           <textarea class="inp" rows="2" style="width:100%" oninput="cpq.conditions.location=this.value">${esc(pq.conditions?.location||'')}</textarea></div>
         <div><label class="lbl">Hình thức thanh toán</label>
           <textarea class="inp" rows="4" style="width:100%" oninput="cpq.conditions.payment=this.value">${esc(pq.conditions?.payment||'')}</textarea></div>
@@ -3717,7 +3747,7 @@ function exportProjectPDF(id){
   const conditions = pq.conditions||{};
   const condMap = [
     ['Thời gian giao hàng', conditions.delivery],
-    ['Nơi giao hàng', conditions.location],
+    ['Nơi thực hiện', conditions.location],
     ['Hình thức thanh toán', conditions.payment],
     ['Giá bao gồm', conditions.pricing],
     ['Thời gian bảo hành', conditions.warranty],
@@ -3982,7 +4012,7 @@ function exportProjectXLSX(id){
     ['ĐIỀU KIỆN THƯƠNG MẠI'],
     [],
     ['1. Thời gian giao hàng:', conds.delivery||''],
-    ['2. Nơi giao hàng:', conds.location||''],
+    ['2. Nơi thực hiện:', conds.location||''],
     ['3. Hình thức thanh toán:', conds.payment||''],
     ['4. Giá bao gồm:', conds.pricing||''],
     ['5. Thời gian bảo hành:', conds.warranty||''],
@@ -7105,6 +7135,23 @@ function downloadTemplate(){
 // ── CATALOG AUTOCOMPLETE (dùng trong editor) ──────────────────
 let acActive=-1;
 function buildItemRow(it,idx,cur){
+  // DÒNG NHÓM (tiêu đề phân nhóm La Mã)
+  if(it.isSection){
+    return `<tr id="ir-${it.id}" style="background:#FBF7EC">
+      <td style="text-align:center;font-weight:800;color:${it.secColor||'#B8901E'};font-size:12px">${esc(it.label||'')}</td>
+      <td colspan="7" style="padding:6px 8px">
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <input class="ii sec-name-inp" style="flex:1;min-width:200px;font-weight:700" placeholder="Tên phân nhóm (VD: PHẦN THIẾT BỊ ĐO)..." value="${esc(it.name||'')}" oninput="si(${it.id},'name',this.value)">
+          <button class="btn ${it.secBold?'btn-p':'btn-g'}" style="padding:3px 9px;font-weight:800" onclick="secToggle(${it.id},'secBold',this)" title="In đậm">B</button>
+          <button class="btn ${it.secItalic?'btn-p':'btn-g'}" style="padding:3px 9px;font-style:italic" onclick="secToggle(${it.id},'secItalic',this)" title="In nghiêng">I</button>
+          <button class="btn ${it.secUnderline?'btn-p':'btn-g'}" style="padding:3px 9px;text-decoration:underline" onclick="secToggle(${it.id},'secUnderline',this)" title="Gạch chân">U</button>
+          <button class="btn ${it.secUpper?'btn-p':'btn-g'}" style="padding:3px 9px;font-weight:700" onclick="secToggle(${it.id},'secUpper',this)" title="IN HOA">AA</button>
+          <input type="color" value="${it.secColor||'#B8901E'}" onchange="si(${it.id},'secColor',this.value)" title="Chọn màu chữ" style="width:34px;height:30px;border:1px solid var(--border);border-radius:6px;cursor:pointer;padding:1px">
+        </div>
+      </td>
+      <td style="width:30px"><button class="db" onclick="di(${it.id})">✕</button></td>
+    </tr>`;
+  }
   return`<tr id="ir-${it.id}">
     <td style="text-align:center;color:var(--muted);font-size:11px;width:28px">${idx+1}</td>
     <td style="position:relative">
@@ -8348,8 +8395,8 @@ body{font-family:Arial,Helvetica,'Segoe UI',sans-serif;font-size:10.5pt;font-wei
 .qnotes strong{display:block;font-size:8pt;text-transform:uppercase;letter-spacing:1px;color:var(--pc2b);font-weight:700;margin-bottom:5px;}
 
 /* ── SIGNATURE ── */
-.sign-row{display:flex;justify-content:flex-end;margin-top:24px;margin-bottom:8px;}
-.sign-block{text-align:center;min-width:250px;}
+.sign-row{display:flex;justify-content:space-between;margin-top:24px;margin-bottom:8px;gap:50px;}
+.sign-block{text-align:center;flex:1;}
 .sign-title{font-size:9pt;font-weight:700;color:#1c2530;text-transform:uppercase;letter-spacing:.8px;}
 .sign-dept{font-size:8pt;color:var(--pc2);margin-top:2px;text-transform:uppercase;letter-spacing:.5px;font-weight:600;}
 .sign-hint{font-size:8.5pt;color:#95a1ac;margin-top:2px;}
@@ -8477,7 +8524,21 @@ function buildHTML(q,co,forPrint){
 
   const showAppendix = q.showAppendix != null ? q.showAppendix : q.items.some(it=>(it.name||'').trim());
 
+  let _pdfSeq=0; // số thứ tự chỉ đếm dòng sản phẩm, không đếm dòng nhóm
   const iRows=q.items.map((it,i)=>{
+    // DÒNG NHÓM — tiêu đề phân nhóm La Mã (I, II, III...)
+    if(it.isSection){
+      let label=(it.name||'');
+      if(it.secUpper) label=label.toUpperCase();
+      // Phong cách giống header bảng: in hoa nhẹ, giãn ký tự, gọn gàng
+      let css='padding:8px 12px;background:#FBF7EC;color:'+(it.secColor||'#B8901E')+';font-size:8.5pt;letter-spacing:.6px;line-height:1.3;border-bottom:1px solid rgba(184,144,30,.25);';
+      css+= it.secBold ? 'font-weight:700;' : 'font-weight:600;';
+      if(it.secItalic) css+='font-style:italic;';
+      if(it.secUnderline) css+='text-decoration:underline;';
+      const roman=it.label?`<span style="margin-right:9px;font-weight:800">${esc(it.label)}.</span>`:'';
+      return `<tr><td colspan="7" style="${css}">${roman}${esc(label)}</td></tr>`;
+    }
+    _pdfSeq++;
     const lines=(it.name||'').split('\n');
     const firstLine=esc(lines[0]||'—');
     const restLines=lines.slice(1).map(l=>esc(l)).join('<br>');
@@ -8486,7 +8547,7 @@ function buildHTML(q,co,forPrint){
     const modelHtml=model?`<div class="pmodel">Model: ${esc(model)}</div>`:'';
     const nameHtml=`<div class="pname"><b>${firstLine}</b>${restLines?'<br>'+restLines:''}${codeHtml}${modelHtml}</div>`;
     return`<tr>
-    <td class="c" style="color:#95a1ac;vertical-align:top">${i+1}</td>
+    <td class="c" style="color:#95a1ac;vertical-align:top">${_pdfSeq}</td>
     <td style="vertical-align:top">${nameHtml}</td>
     <td class="brandcol" style="vertical-align:top">${fmtBrand(it.brand)}</td>
     <td class="c" style="vertical-align:top">${esc(it.unit)}</td>
@@ -8517,7 +8578,7 @@ function buildHTML(q,co,forPrint){
     </div>
   </div>`:'';
 
-  const appendixItems = q.items.filter(it=>(it.name||'').trim());
+  const appendixItems = q.items.filter(it=>!it.isSection && (it.name||'').trim());
   const appendixHtml = (showAppendix && appendixItems.length) ? `
   <div class="apx">
     <div class="apx-title">Phụ lục kỹ thuật</div>
@@ -8588,7 +8649,7 @@ function buildHTML(q,co,forPrint){
       <div class="ic-name">${esc(g(q.clientName)||'—')}</div>
       <div class="ic-details">
         ${q.clientContact?'Người liên hệ: <b>'+esc(q.clientContact)+'</b><br>':''}${q.clientPhone?'ĐT: <b>'+esc(q.clientPhone)+'</b><br>':''}${g(q.clientAddr)?esc(g(q.clientAddr)):''}
-        ${loc?'<br>Nơi giao: <b>'+esc(loc)+'</b>':''}
+        ${loc?'<br>Nơi thực hiện: <b>'+esc(loc)+'</b>':''}
       </div>
     </div>
     <div class="info-card ic-green">
@@ -8638,6 +8699,13 @@ function buildHTML(q,co,forPrint){
         : `<div class="sign-hint">(Ký, ghi rõ họ tên)</div><div class="sigline"></div>`}
       <div class="sign-name">${esc(g(q.signedBy)||g(co.contact))}</div>
       ${q.signedTitle?'<div class="sign-pos">'+esc(q.signedTitle)+'</div>':''}
+    </div>
+    <div class="sign-block">
+      <div class="sign-title">Người duyệt báo giá</div>
+      <div class="sign-dept">Ban Giám đốc · Approved by</div>
+      <div class="sign-hint">(Ký, ghi rõ họ tên)</div><div class="sigline"></div>
+      <div class="sign-name">${esc(g(q.approvedBy)||'')}</div>
+      ${q.approvedTitle?'<div class="sign-pos">'+esc(q.approvedTitle)+'</div>':(g(q.approvedBy)?'<div class="sign-pos">Giám đốc</div>':'')}
     </div>
   </div>
 
@@ -9264,7 +9332,7 @@ function exportQuoteXLSX(){
   const clientRows=[
     [q.clientName||'—',`Số BG: ${q.num||''}`],
     [q.clientContact?`Liên hệ: ${q.clientContact}`:'',`Ngày: ${q.date||''}`],
-    [q.clientPhone?`ĐT: ${q.clientPhone}`:'',q.deliveryLocation?`Nơi giao: ${q.deliveryLocation}`:''],
+    [q.clientPhone?`ĐT: ${q.clientPhone}`:'',q.deliveryLocation?`Nơi thực hiện: ${q.deliveryLocation}`:''],
     [q.clientAddr||'',''],
   ];
   clientRows.forEach(([left,right],i)=>{
