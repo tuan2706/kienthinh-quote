@@ -1321,6 +1321,35 @@ function clearAuthMsg(){
   document.getElementById('auth-ok').style.display='none';
 }
 
+// ── MÃ HOÁ MẬT KHẨU (SHA-256, có sẵn trong trình duyệt) ──────────
+// Mật khẩu KHÔNG còn lưu dạng thô. Bản ghi cũ (thô) vẫn đăng nhập được và
+// sẽ tự động được nâng cấp thành bản mã hoá khi người dùng đăng nhập đúng.
+async function hashPassword(plain){
+  try{
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('kt$'+plain));
+    return 'h1:'+Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+  }catch(e){
+    // Dự phòng nếu trình duyệt quá cũ (không có crypto.subtle): giữ nguyên thô
+    return plain;
+  }
+}
+function isHashed(v){ return typeof v==='string' && v.slice(0,3)==='h1:'; }
+// So khớp mật khẩu người dùng nhập với giá trị đang lưu (thô hoặc đã hash)
+async function passwordMatches(plain, stored){
+  if(stored==null || stored==='') return false;
+  if(isHashed(stored)) return (await hashPassword(plain))===stored;
+  return plain===stored; // bản ghi cũ dạng thô
+}
+
+async function doLoginHashUpgrade(users, email, u, plain){
+  // Nếu mật khẩu đang lưu là dạng thô → nâng cấp lên hash rồi lưu
+  if(u && u.pass && !isHashed(u.pass)){
+    u.pass = await hashPassword(plain);
+    users[email] = u;
+    saveUsers(users);
+  }
+}
+
 function validateEmail(email){
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
@@ -1339,27 +1368,50 @@ async function doLogin(){
     const users = await cloudGetUsers();
     const u = users[email];
 
-    if(!u){
-      if(email === ADMIN_EMAIL){
-        // Bootstrap tài khoản admin lần đầu
-        const displayName = email.split('@')[0];
-        users[email] = {name:displayName, pass:pass, status:'approved', createdAt:new Date().toISOString()};
-        saveUsers(users);
-        showAuthOk('✅ Đăng nhập thành công!');
-        setTimeout(()=>{ loginUser(email, displayName); setTimeout(()=>sbInit(), 800); }, 500);
-        return;
+    // ════════════════════════════════════════════════════════════
+    // ADMIN LUÔN ĐĂNG NHẬP ĐƯỢC — không bao giờ bị khoá ngoài.
+    // Dù chưa có bản ghi, hoặc bản ghi cũ thiếu mật khẩu / sai mật khẩu:
+    // mật khẩu admin gõ lần này sẽ được nhận làm mật khẩu chính thức.
+    // ════════════════════════════════════════════════════════════
+    if(email === ADMIN_EMAIL){
+      const displayName = (u && u.name) ? u.name : email.split('@')[0];
+      // Nếu admin đã có mật khẩu hợp lệ thì kiểm tra đúng/sai như bình thường;
+      // nếu chưa có mật khẩu (bản ghi cũ lỗi) thì đặt luôn mật khẩu vừa gõ.
+      if(u && u.pass){
+        if(!(await passwordMatches(pass, u.pass))){
+          showAuthErr('Mật khẩu admin không đúng. Nếu quên, xem hướng dẫn "Quên mật khẩu" bên dưới.');
+          return;
+        }
       }
+      // Ghi/cập nhật bản ghi admin: luôn approved, luôn có mật khẩu (đã mã hoá)
+      users[email] = Object.assign({}, u||{}, {
+        name: displayName,
+        pass: await hashPassword(pass),
+        status: 'approved',
+        role: 'admin',
+        mustChangePassword: false,
+        lastLogin: new Date().toISOString(),
+        createdAt: (u && u.createdAt) ? u.createdAt : new Date().toISOString(),
+      });
+      saveUsers(users);
+      showAuthOk('✅ Đăng nhập admin thành công!');
+      setTimeout(()=>{ loginUser(email, displayName); setTimeout(()=>sbInit(), 800); }, 500);
+      return;
+    }
+
+    // ── NHÂN VIÊN (không phải admin) ──
+    if(!u){
       showAuthErr('Email chưa có tài khoản. Vui lòng bấm "Đăng ký" để tạo tài khoản mới.');
       return;
     }
 
     // Kiểm tra mật khẩu
-    if(u.pass && u.pass !== pass){
-      showAuthErr('Mật khẩu không đúng.');
+    if(!u.pass){
+      showAuthErr('Tài khoản chưa được cấp mật khẩu. Vui lòng liên hệ admin để được cấp: '+ADMIN_EMAIL);
       return;
     }
-    if(!u.pass){
-      showAuthErr('Tài khoản chưa được cấp mật khẩu. Vui lòng liên hệ admin: '+ADMIN_EMAIL);
+    if(!(await passwordMatches(pass, u.pass))){
+      showAuthErr('Mật khẩu không đúng.');
       return;
     }
 
@@ -1380,8 +1432,9 @@ async function doLogin(){
       return;
     }
 
-    // Ghi nhận lần đăng nhập gần nhất
+    // Ghi nhận lần đăng nhập gần nhất + nâng cấp mật khẩu lên bản mã hoá nếu còn dạng thô
     u.lastLogin = new Date().toISOString();
+    if(u.pass && !isHashed(u.pass)){ u.pass = await hashPassword(pass); }
     users[email] = u;
     saveUsers(users);
 
@@ -1405,6 +1458,13 @@ async function doForgot(){
   const email=(document.getElementById('forgot-email').value||'').trim().toLowerCase();
   if(!email){showAuthErr('Vui lòng nhập email.');return;}
   if(!validateEmail(email)){showAuthErr('Email không hợp lệ.');return;}
+
+  // ADMIN: tự đặt lại mật khẩu ngay, không cần liên hệ ai.
+  if(email === ADMIN_EMAIL){
+    showAuthOk('Bạn là admin — chỉ cần quay lại màn Đăng nhập, nhập email admin và MẬT KHẨU MỚI bất kỳ. Hệ thống sẽ tự nhận mật khẩu mới đó cho tài khoản admin.');
+    return;
+  }
+
   const users=await cloudGetUsers();
   if(!users[email]){showAuthErr('Email này chưa được đăng ký.');return;}
   showAuthErr('Vì lý do bảo mật, vui lòng liên hệ admin để được cấp lại mật khẩu: '+ADMIN_EMAIL);
@@ -1443,7 +1503,7 @@ async function submitFirstPasswordChange(){
   const users=await cloudGetUsers();
   const u=users[_pwChangeEmail];
   if(!u){showAuthErr('Không tìm thấy tài khoản.');return;}
-  u.pass=p1;
+  u.pass=await hashPassword(p1);
   u.mustChangePassword=false;
   u.lastLogin=new Date().toISOString();
   users[_pwChangeEmail]=u;
@@ -1504,11 +1564,12 @@ function loginUser(user,name){
           outContracts = cloudData.oc || outContracts;
           stockOut = cloudData.so || stockOut;
           stockIn = cloudData.si || stockIn;
+          estimates = cloudData.es || estimates;
           if(cloudData.calc) calcState = {...calcState, ...cloudData.calc};
           ULS.set('qs', quotes); ULS.set('pqs', projects); ULS.set('co', company);
           ULS.set('cat', catalog); ULS.set('cust', customers);
           ULS.set('sup', suppliers); ULS.set('tpl', templates);
-          ULS.set('log', auditLog); ULS.set('ph', priceHistory); ULS.set('oc', outContracts); ULS.set('so', stockOut); ULS.set('si', stockIn);
+          ULS.set('log', auditLog); ULS.set('ph', priceHistory); ULS.set('oc', outContracts); ULS.set('so', stockOut); ULS.set('si', stockIn); ULS.set('es', estimates);
           if(cloudData.calc) ULS.set('calc', calcState);
           updateSB();
           const ce = document.getElementById('content');
@@ -1675,7 +1736,7 @@ window.addEventListener('DOMContentLoaded',()=>{
 });
 
 // ── STORAGE (see above for LS definition) ───────────────────
-const KEYS={co:'co',qs:'qs',cat:'cat',calc:'calc',cust:'cust',sup:'sup',tpl:'tpl',log:'log',ph:'ph',oc:'oc',so:'so',si:'si'};
+const KEYS={co:'co',qs:'qs',cat:'cat',calc:'calc',cust:'cust',sup:'sup',tpl:'tpl',log:'log',ph:'ph',oc:'oc',so:'so',si:'si',es:'es'};
 
 // ── CONSTANTS ───────────────────────────────────────────────
 const CURR={
@@ -1793,6 +1854,7 @@ let priceHistory=ULS.get(KEYS.ph)||[]; // [{id,itemName,itemCode,supplierId,supp
 let outContracts=ULS.get('oc')||[]; // [{id,customerName,contractNo,date,note,items:[{name,code,qty,buyPrice,sellPrice,currency,project}],createdBy,createdAt}] — hợp đồng đầu ra (bán cho KH)
 let stockOut=ULS.get('so')||[]; // [{id,key,name,code,qty,date,note,project,createdBy,createdAt}] — các lần xuất kho thủ công (key = mã hoặc tên chuẩn hoá để nhóm)
 let stockIn=ULS.get('si')||[]; // [{id,name,code,brand,qty,date,contractNo,project,note,createdBy,createdAt}] — nhập kho thủ công (hàng chưa có đơn mua/chưa kịp nhập)
+let estimates=ULS.get('es')||[]; // [{id,supplierName,quoteNo,date,validUntil,note,items:[{name,code,qty,price,currency,project}],createdBy,createdAt}] — báo giá dự toán NCC chào (chưa chốt HĐ)
 let cq=null; // current quote being edited
 
 const bq=()=>({
@@ -2890,7 +2952,25 @@ async function loginWithGoogle() {
       const email = info.email;
       const name = info.name || email;
       const users = await cloudGetUsers();
-      const existing = users[email];
+      let existing = users[email];
+
+      // ADMIN qua đường Google: luôn approved, không bao giờ kẹt ở pending/rejected.
+      if(email === ADMIN_EMAIL){
+        users[email] = Object.assign({}, existing||{}, {
+          name: (existing && existing.name) ? existing.name : name,
+          status: 'approved',
+          role: 'admin',
+          createdAt: (existing && existing.createdAt) ? existing.createdAt : new Date().toISOString(),
+        });
+        saveUsers(users);
+        existing = users[email];
+        LS.set('bgpro:displayName', users[email].name);
+        if (!currentUser || currentUser === '__guest__') { loginUser(email, users[email].name); }
+        setTimeout(() => sbInit(), 500);
+        toast('Đã kết nối Google Drive (admin)', 'success', email);
+        resolve(info);
+        return;
+      }
 
       if(!existing){
         const isAdmin = email === ADMIN_EMAIL;
@@ -2978,6 +3058,9 @@ async function sbInit() {
   if (Array.isArray(cloudData.si) && (cloudData.si.length >= stockIn.length || stockIn.length===0)) {
     stockIn = cloudData.si; ULS.set('si', stockIn); changed = true;
   }
+  if (Array.isArray(cloudData.es) && (cloudData.es.length >= estimates.length || estimates.length===0)) {
+    estimates = cloudData.es; ULS.set('es', estimates); changed = true;
+  }
   if (changed) {
     updateSB();
     if (currentPage === 'dashboard') goPage('dashboard');
@@ -3008,6 +3091,7 @@ function sbAutoSync() {
       oc:   ULS.get('oc')   || [],
       so:   ULS.get('so')   || [],
       si:   ULS.get('si')   || [],
+      es:   ULS.get('es')   || [],
     };
     await gdSaveUserData(currentUser, dataObj);
   }, 3000);
@@ -5188,7 +5272,9 @@ function invKey(name,code){ return stripVN(code||'') || stripVN(name||''); }
 function computeInventory(){
   const map={}; // key -> {key,name,code,brand,inQty,outQty,contracts:Set,projects:Set,lastDate}
   // 1. Nhập kho từ đơn mua — CHỈ tính mặt hàng có ghi project (Dự án/HĐ/Kho)
+  //    VÀ đơn đã "Hoàn thành" (hàng đã về kho). Đơn cũ chưa có giai đoạn → vẫn tính (tương thích ngược).
   (priceHistory||[]).forEach(o=>{
+    if(o.stage && o.stage!=='Hoàn thành') return; // đơn chưa hoàn thành → hàng chưa về kho
     (o.items||[]).forEach(it=>{
       if(!(it.project||'').trim()) return; // bỏ qua hàng không gắn kho/dự án
       const k=invKey(it.name,it.code); if(!k) return;
@@ -5456,6 +5542,261 @@ function delStockIn(id){
   document.getElementById('sih-modal')?.remove();
   renderInventory(document.getElementById('content'));
   toast('Đã xoá','warning');
+}
+
+// ── BÁO GIÁ DỰ TOÁN (giá NCC chào, chưa chốt hợp đồng) ────────
+// Schema: {id, supplierName, quoteNo, date, validUntil, note, items:[{name,code,qty,price,currency,project}], createdBy, createdAt}
+let _esSearch='';
+function esMoney(n,cur){ const s=Math.round(n||0).toLocaleString('vi-VN'); return s+(cur==='USD'?' $':cur==='EUR'?' €':' ₫'); }
+function esDate(iso){ if(!iso)return''; try{return new Date(iso).toLocaleDateString('vi-VN');}catch(e){return iso;} }
+function esOrderTotal(o){
+  const items=o.items||[];
+  const curCount={}; items.forEach(it=>{const cu=it.currency||'VND';curCount[cu]=(curCount[cu]||0)+1;});
+  const cur=Object.entries(curCount).sort((a,b)=>b[1]-a[1])[0]?.[0]||'VND';
+  const total=items.filter(it=>(it.currency||'VND')===cur).reduce((s,it)=>s+(it.price||0)*(it.qty||1),0);
+  return {total,cur};
+}
+
+function renderEstimates(el){
+  const kw=stripVN(_esSearch||'');
+  const list=kw?estimates.filter(o=>
+    stripVN(o.supplierName||'').includes(kw)||stripVN(o.quoteNo||'').includes(kw)||
+    (o.items||[]).some(it=>stripVN(it.name||'').includes(kw)||stripVN(it.code||'').includes(kw))
+  ):estimates;
+  const sorted=[...list].sort((a,b)=>new Date(b.date||b.createdAt||0)-new Date(a.date||a.createdAt||0));
+  const totalC=estimates.length;
+  const totalItems=estimates.reduce((s,o)=>s+(o.items?.length||0),0);
+
+  el.innerHTML=`
+  <div class="card">
+    <div class="card-title">📝 Báo giá dự toán</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Lưu các <b>báo giá nhà cung cấp đã chào</b> nhưng chưa chốt hợp đồng. Để nhớ lại giá NCC báo, so sánh và tham khảo khi cần đặt hàng.</div>
+    <div class="abar" style="margin-bottom:12px">
+      <button class="btn btn-p" onclick="openEstimateModal()">➕ Thêm báo giá dự toán</button>
+      <input class="inp" id="es-q" value="${esc(_esSearch)}" placeholder="🔍  Tìm theo NCC, số báo giá, tên/mã hàng..." oninput="_esSearch=this.value;keepSearchFocus('es-q',()=>renderEstimates(document.getElementById('sup-tab-body')))" style="max-width:380px;flex:1">
+      ${totalC?`<button class="btn btn-g" onclick="exportEstimateExcel()">📤 Export Excel</button>`:''}
+    </div>
+    ${totalC?`<div class="cat-stats">
+      <div class="cat-stat"><b>${totalC}</b>Báo giá</div>
+      <div class="cat-stat"><b>${totalItems}</b>Dòng hàng</div>
+    </div>`:''}
+    ${sorted.length?`
+    <div style="display:flex;flex-direction:column;gap:12px;margin-top:6px">
+      ${sorted.map(o=>{
+        const t=esOrderTotal(o);
+        const expired=o.validUntil && new Date(o.validUntil)<new Date(new Date().toISOString().slice(0,10));
+        return `<div class="pq-list-card" style="cursor:default">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap">
+            <div style="flex:1;min-width:200px">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap">
+                <span style="font-size:14px;font-weight:700;color:var(--text)">🏭 ${esc(o.supplierName||'(Chưa rõ NCC)')}</span>
+                ${o.quoteNo?`<span style="font-size:11px;font-weight:700;color:var(--accent2);background:var(--bg2);padding:2px 8px;border-radius:20px">${esc(o.quoteNo)}</span>`:''}
+                ${expired?`<span style="font-size:11px;font-weight:700;padding:2px 10px;border-radius:20px;background:#FBE9E9;color:#A32D2D">Hết hiệu lực</span>`:''}
+              </div>
+              <div style="font-size:11px;color:var(--text3);margin-bottom:8px">📅 Ngày báo: ${esDate(o.date||o.createdAt)} · ${o.items.length} mặt hàng${o.validUntil?' · ⏳ Hiệu lực đến: '+esDate(o.validUntil):''}${o.note?' · 📝 '+esc(o.note):''}</div>
+              <div style="border:1px solid var(--border);border-radius:8px;overflow:auto">
+                <table style="width:100%;border-collapse:collapse;font-size:12px;min-width:480px">
+                  <thead><tr>
+                    <th style="background:var(--bg2);color:var(--text3);padding:6px 9px;text-align:left;font-size:10px;text-transform:uppercase">Tên hàng</th>
+                    <th style="background:var(--bg2);color:var(--text3);padding:6px 9px;text-align:left;font-size:10px;text-transform:uppercase">Mã</th>
+                    <th style="background:var(--bg2);color:var(--text3);padding:6px 9px;text-align:center;font-size:10px;text-transform:uppercase">SL</th>
+                    <th style="background:var(--bg2);color:var(--text3);padding:6px 9px;text-align:right;font-size:10px;text-transform:uppercase">Giá chào</th>
+                    <th style="background:var(--bg2);color:var(--text3);padding:6px 9px;text-align:center;font-size:10px;text-transform:uppercase"></th>
+                  </tr></thead>
+                  <tbody>${o.items.map(it=>`<tr>
+                    <td style="padding:6px 9px;border-top:1px solid var(--border);font-weight:600">${esc(it.name||'')}</td>
+                    <td style="padding:6px 9px;border-top:1px solid var(--border);color:var(--accent2);font-weight:600">${esc(it.code||'')}</td>
+                    <td style="padding:6px 9px;border-top:1px solid var(--border);text-align:center;color:var(--text2)">${it.qty||1}</td>
+                    <td style="padding:6px 9px;border-top:1px solid var(--border);text-align:right;font-weight:700;white-space:nowrap">${esMoney(it.price,it.currency)}</td>
+                    <td style="padding:6px 9px;border-top:1px solid var(--border);text-align:center"><button class="btn btn-g" style="padding:1px 6px;font-size:10px" onclick="openItemPriceTrend('${esc((it.code||it.name||'').replace(/'/g,''))}')" title="Xem lịch sử giá">📈</button></td>
+                  </tr>`).join('')}</tbody>
+                </table>
+              </div>
+            </div>
+            <div style="text-align:right;white-space:nowrap;min-width:140px">
+              <div style="font-size:10px;color:var(--text3)">Tổng báo giá</div>
+              <div style="font-size:15px;font-weight:800;color:var(--text)">${esMoney(t.total,t.cur)}</div>
+              <div style="display:flex;gap:6px;margin-top:10px;justify-content:flex-end;flex-wrap:wrap">
+                <button class="btn btn-g" style="font-size:10px;padding:4px 9px" onclick="convertEstimateToOrder('${o.id}')" title="Chuyển thành đơn mua/hợp đồng">➡️ Thành đơn mua</button>
+                <button class="btn btn-g" style="font-size:10px;padding:4px 9px" onclick="openEstimateModal('${o.id}')">✏️ Sửa</button>
+                <button class="btn btn-danger" style="font-size:10px;padding:4px 9px" onclick="delEstimate('${o.id}')">🗑 Xoá</button>
+              </div>
+            </div>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`:`
+    <div class="empty-state">
+      <div class="empty-state-icon">📝</div>
+      <div class="empty-state-title">${totalC?'Không tìm thấy báo giá phù hợp':'Chưa có báo giá dự toán nào'}</div>
+      <div class="empty-state-desc">Khi nhà cung cấp gửi báo giá nhưng bạn chưa chốt hợp đồng, lưu lại đây để nhớ giá họ đã chào.<br>Khi quyết định đặt, bấm <b>Thành đơn mua</b> để chuyển sang Hợp đồng đầu vào.</div>
+      ${!totalC?`<button class="btn btn-p" style="margin-top:10px" onclick="openEstimateModal()">➕ Thêm báo giá đầu tiên</button>`:''}
+    </div>`}
+  </div>`;
+}
+
+function esItemRowHtml(it){
+  it=it||{};
+  return `<tr class="es-item-row">
+    <td style="padding:4px"><input class="inp es-it-name" list="es-name-list" value="${esc(it.name||'')}" placeholder="Tên hàng" oninput="esRowSuggest(this)" style="font-size:12px;min-width:150px"></td>
+    <td style="padding:4px"><input class="inp es-it-code" value="${esc(it.code||'')}" placeholder="Mã" style="font-size:12px;width:96px"></td>
+    <td style="padding:4px"><input class="inp es-it-qty" value="${it.qty||1}" placeholder="1" style="font-size:12px;width:48px;text-align:center" oninput="this.value=this.value.replace(/[^0-9]/g,'')"></td>
+    <td style="padding:4px"><input class="inp es-it-price" value="${it.price?Number(it.price).toLocaleString('vi-VN'):''}" placeholder="0" style="font-size:12px;width:116px;text-align:right" inputmode="numeric" oninput="onPriceInput(this)"></td>
+    <td style="padding:4px"><select class="inp es-it-cur" style="font-size:12px;width:62px">${['VND','USD','EUR'].map(cu=>`<option value="${cu}"${(it.currency||'VND')===cu?' selected':''}>${cu}</option>`).join('')}</select></td>
+    <td style="padding:4px;text-align:center"><button class="pq-del-btn" onclick="this.closest('tr').remove()" title="Xoá dòng">✕</button></td>
+  </tr>`;
+}
+
+function openEstimateModal(id){
+  const o = id ? estimates.find(x=>x.id===id) : null;
+  const isEdit=!!o;
+  const items = o && o.items && o.items.length ? o.items : [{}];
+  const supOpts = suppliers.map(s=>`<option value="${esc(s.name)}">`).join('');
+  const old=document.getElementById('es-modal'); if(old)old.remove();
+  const m=document.createElement('div');
+  m.id='es-modal';
+  m.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:24px 16px;overflow:auto';
+  m.innerHTML=`
+    <div style="background:var(--panel);border-radius:14px;padding:22px;max-width:820px;width:100%;margin:auto">
+      <div style="font-size:16px;font-weight:700;margin-bottom:16px;color:var(--text)">${isEdit?'✏️ Sửa báo giá dự toán':'➕ Thêm báo giá dự toán'}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;margin-bottom:16px">
+        <div><label class="lbl">Nhà cung cấp <span style="color:var(--danger)">*</span></label>
+          <input class="inp" id="es-sup" list="es-sup-list" value="${esc(o?.supplierName||'')}" placeholder="Chọn/nhập NCC">
+          <datalist id="es-sup-list">${supOpts}</datalist>
+        </div>
+        <div><label class="lbl">Số báo giá</label><input class="inp" id="es-no" value="${esc(o?.quoteNo||'')}" placeholder="VD: BG-NCC-01"></div>
+        <div><label class="lbl">Ngày báo giá</label><input class="inp" type="date" id="es-date" value="${o?.date? o.date.slice(0,10):new Date().toISOString().slice(0,10)}"></div>
+        <div><label class="lbl">Hiệu lực đến</label><input class="inp" type="date" id="es-valid" value="${o?.validUntil? o.validUntil.slice(0,10):''}"></div>
+      </div>
+      <div style="margin-bottom:8px"><label class="lbl">Danh sách hàng NCC chào giá</label></div>
+      <div style="border:1px solid var(--border);border-radius:8px;overflow:auto">
+        <table style="width:100%;border-collapse:collapse;min-width:560px">
+          <thead><tr>
+            <th style="background:var(--bg2);color:var(--text3);padding:7px 8px;text-align:left;font-size:10px;text-transform:uppercase">Tên hàng</th>
+            <th style="background:var(--bg2);color:var(--text3);padding:7px 8px;text-align:left;font-size:10px;text-transform:uppercase">Mã</th>
+            <th style="background:var(--bg2);color:var(--text3);padding:7px 8px;text-align:center;font-size:10px;text-transform:uppercase">SL</th>
+            <th style="background:var(--bg2);color:var(--text3);padding:7px 8px;text-align:right;font-size:10px;text-transform:uppercase">Giá chào</th>
+            <th style="background:var(--bg2);color:var(--text3);padding:7px 8px;text-align:center;font-size:10px;text-transform:uppercase">Tiền tệ</th>
+            <th style="background:var(--bg2);padding:7px 8px"></th>
+          </tr></thead>
+          <tbody id="es-items-body">${items.map(it=>esItemRowHtml(it)).join('')}</tbody>
+        </table>
+      </div>
+      <datalist id="es-name-list">${catalog.map(c=>`<option value="${esc(c.name)}">`).join('')}</datalist>
+      <button class="pq-add-row" style="margin-top:10px" onclick="document.getElementById('es-items-body').insertAdjacentHTML('beforeend', esItemRowHtml({}))">＋ Thêm hàng</button>
+      <div style="margin-top:14px"><label class="lbl">Ghi chú</label><input class="inp" id="es-note" value="${esc(o?.note||'')}" placeholder="VD: giá đã gồm VAT, điều kiện giao..."></div>
+      <div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end">
+        <button class="btn btn-g" onclick="document.getElementById('es-modal').remove()">Huỷ</button>
+        <button class="btn btn-p" onclick="saveEstimate(${isEdit?`'${o.id}'`:'null'})">${isEdit?'💾 Lưu báo giá':'➕ Thêm báo giá'}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+  setTimeout(()=>document.getElementById('es-sup')?.focus(),80);
+}
+
+function esRowSuggest(inp){
+  const tr=inp.closest('tr');
+  const codeEl=tr?.querySelector('.es-it-code');
+  if(codeEl && !codeEl.value){
+    const hit=catalog.find(c=>stripVN(c.name||'')===stripVN(inp.value||''));
+    if(hit) codeEl.value=hit.code||'';
+  }
+}
+
+function saveEstimate(id){
+  const supplierName=(document.getElementById('es-sup')?.value||'').trim();
+  if(!supplierName){toast('Vui lòng nhập nhà cung cấp','error');return;}
+  const rows=[...document.querySelectorAll('#es-items-body .es-item-row')];
+  const items=[];
+  for(const tr of rows){
+    const name=(tr.querySelector('.es-it-name')?.value||'').trim();
+    const price=parseMoney(tr.querySelector('.es-it-price')?.value||'0');
+    if(!name && !price) continue;
+    if(!name){toast('Có dòng thiếu tên hàng','error');return;}
+    items.push({
+      name,
+      code:(tr.querySelector('.es-it-code')?.value||'').trim(),
+      qty:parseInt(tr.querySelector('.es-it-qty')?.value||'1')||1,
+      price,
+      currency:tr.querySelector('.es-it-cur')?.value||'VND',
+    });
+  }
+  if(!items.length){toast('Vui lòng nhập ít nhất 1 hàng hóa','error');return;}
+  const data={
+    supplierName,
+    quoteNo:(document.getElementById('es-no')?.value||'').trim(),
+    date:document.getElementById('es-date')?.value||new Date().toISOString().slice(0,10),
+    validUntil:document.getElementById('es-valid')?.value||'',
+    note:(document.getElementById('es-note')?.value||'').trim(),
+    items,
+  };
+  if(id){
+    const i=estimates.findIndex(x=>x.id===id);
+    if(i>=0) estimates[i]={...estimates[i],...data};
+    logAction('Sửa báo giá dự toán', supplierName, items.length+' mặt hàng');
+  }else{
+    data.id='es'+Date.now()+Math.floor(Math.random()*1000);
+    data.createdBy=LS.get('bgpro:displayName')||currentUser||'';
+    data.createdAt=new Date().toISOString();
+    estimates.unshift(data);
+    logAction('Tạo báo giá dự toán', supplierName, items.length+' mặt hàng');
+  }
+  ULS.set('es',estimates); sbAutoSync();
+  document.getElementById('es-modal')?.remove();
+  renderEstimates(document.getElementById('sup-tab-body'));
+  toast('Đã lưu báo giá dự toán','success');
+}
+
+function delEstimate(id){
+  const o=estimates.find(x=>x.id===id);
+  if(!confirm('Xoá báo giá dự toán của "'+(o?.supplierName||'')+'"'+(o?.quoteNo?' ('+o.quoteNo+')':'')+'?'))return;
+  estimates=estimates.filter(x=>x.id!==id);
+  ULS.set('es',estimates); sbAutoSync();
+  renderEstimates(document.getElementById('sup-tab-body'));
+  toast('Đã xoá báo giá dự toán','warning');
+  logAction('Xoá báo giá dự toán', o?.supplierName||'', '');
+}
+
+// Chuyển báo giá dự toán → đơn mua (Hợp đồng đầu vào)
+function convertEstimateToOrder(id){
+  const o=estimates.find(x=>x.id===id);
+  if(!o)return;
+  if(!confirm('Chuyển báo giá này thành đơn mua trong "Hợp đồng đầu vào"?\nBáo giá dự toán vẫn được giữ lại.'))return;
+  const newOrder={
+    id:'po'+Date.now()+Math.floor(Math.random()*1000),
+    supplierName:o.supplierName,
+    poNumber:o.quoteNo||'',
+    date:new Date().toISOString().slice(0,10),
+    stage:'Đang lên hợp đồng',
+    orderDate:'',
+    deliveryCommit:'',
+    note:'Chuyển từ báo giá dự toán'+(o.quoteNo?' '+o.quoteNo:''),
+    items:(o.items||[]).map(it=>({name:it.name,code:it.code,qty:it.qty,price:it.price,currency:it.currency,project:''})),
+    createdBy:LS.get('bgpro:displayName')||currentUser||'',
+    createdAt:new Date().toISOString(),
+  };
+  priceHistory.unshift(newOrder);
+  ULS.set(KEYS.ph,priceHistory); sbAutoSync();
+  logAction('Chuyển báo giá → đơn mua', o.supplierName, o.items.length+' mặt hàng');
+  toast('Đã chuyển thành đơn mua','success','Xem ở tab Hợp đồng đầu vào');
+  _supTab='price';
+  renderSuppliers(document.getElementById('content'));
+}
+
+function exportEstimateExcel(){
+  if(typeof XLSX==='undefined'){toast('Thư viện Excel chưa tải xong, thử lại','error');return;}
+  const rows=[['Ngày báo giá','Nhà cung cấp','Số báo giá','Hiệu lực đến','Tên hàng','Mã hàng','SL','Giá chào','Tiền tệ','Ghi chú','Người tạo']];
+  [...estimates].sort((a,b)=>new Date(b.date||b.createdAt||0)-new Date(a.date||a.createdAt||0)).forEach(o=>{
+    (o.items||[]).forEach(it=>{
+      rows.push([esDate(o.date||o.createdAt), o.supplierName||'', o.quoteNo||'', o.validUntil?esDate(o.validUntil):'', it.name||'', it.code||'', it.qty||1, it.price||0, it.currency||'VND', o.note||'', o.createdBy||'']);
+    });
+  });
+  const ws=XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols']=[{wch:13},{wch:24},{wch:14},{wch:13},{wch:30},{wch:14},{wch:6},{wch:16},{wch:8},{wch:22},{wch:14}];
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,'Báo giá dự toán');
+  XLSX.writeFile(wb,`BaoGiaDuToan_${new Date().toISOString().slice(0,10)}.xlsx`);
+  toast('Đã xuất Excel','success');
 }
 
 function renderCustTable(q){
@@ -5772,16 +6113,18 @@ function importCustExcel(inp){
 }
 
 // ── SUPPLIER LIBRARY ─────────────────────────────────────────
-let _supTab = 'list'; // 'list' | 'price'
+let _supTab = 'list'; // 'list' | 'price' | 'estimate'
 function renderSuppliers(el){
   el.innerHTML = `
     <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
       <button class="btn ${_supTab==='list'?'btn-p':'btn-g'}" onclick="_supTab='list';renderSuppliers(document.getElementById('content'))">🏭 Nhà cung cấp</button>
-      <button class="btn ${_supTab==='price'?'btn-p':'btn-g'}" onclick="_supTab='price';renderSuppliers(document.getElementById('content'))">💰 Lịch sử giá đầu vào</button>
+      <button class="btn ${_supTab==='price'?'btn-p':'btn-g'}" onclick="_supTab='price';renderSuppliers(document.getElementById('content'))">📄 Hợp đồng đầu vào</button>
+      <button class="btn ${_supTab==='estimate'?'btn-p':'btn-g'}" onclick="_supTab='estimate';renderSuppliers(document.getElementById('content'))">📝 Báo giá dự toán</button>
     </div>
     <div id="sup-tab-body"></div>`;
   const body = document.getElementById('sup-tab-body');
   if(_supTab==='price'){ renderPriceHistory(body); return; }
+  if(_supTab==='estimate'){ renderEstimates(body); return; }
   renderSupplierList(body);
 }
 
@@ -5875,6 +6218,19 @@ function phOrderTotal(order){
   return {total, cur:mainCur};
 }
 
+// Màu badge theo giai đoạn đơn hàng
+function stageStyle(stage){
+  const map={
+    'Đang lên hợp đồng':'background:#EEF0F2;color:#5A6672',
+    'Ký hợp đồng':'background:#E5EEF9;color:#185FA5',
+    'Đã đặt hàng':'background:#FBF0DC;color:#9A6B10',
+    'Đang sản xuất':'background:#FBE9D8;color:#B5591A',
+    'Giao hàng':'background:#DDF0EC;color:#1B7A66',
+    'Hoàn thành':'background:#E4F0D9;color:#3B6D11',
+  };
+  return map[stage]||'background:#EEF0F2;color:#5A6672';
+}
+
 function renderPriceHistory(el){
   const kw = stripVN(_phSearch||'');
   const orders = priceHistory.filter(o=>o && o.items); // chỉ lấy bản ghi đúng cấu trúc đơn
@@ -5889,8 +6245,8 @@ function renderPriceHistory(el){
 
   el.innerHTML = `
   <div class="card">
-    <div class="card-title">💰 Lịch sử giá đầu vào</div>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Mỗi bản ghi là một <b>đơn mua / hợp đồng</b> từ nhà cung cấp, chứa nhiều mặt hàng. Dùng để tra cứu và so sánh giá đầu vào qua thời gian.</div>
+    <div class="card-title">📄 Hợp đồng đầu vào</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Mỗi bản ghi là một <b>đơn mua / hợp đồng đầu vào</b> từ nhà cung cấp, chứa nhiều mặt hàng. Theo dõi giai đoạn đơn hàng, ngày đặt, tiến độ cam kết. Khi giai đoạn <b>Hoàn thành</b>, hàng tự cập nhật vào Hàng tồn kho.</div>
     <div class="abar" style="margin-bottom:12px">
       <button class="btn btn-p" onclick="openPriceModal()">➕ Tạo đơn mua</button>
       <input class="inp" id="ph-q" value="${esc(_phSearch)}" placeholder="🔍  Tìm theo nhà cung cấp, số HĐ, tên/mã hàng..." oninput="_phSearch=this.value;keepSearchFocus('ph-q',()=>renderPriceHistory(document.getElementById('sup-tab-body')))" style="max-width:380px;flex:1">
@@ -5911,8 +6267,10 @@ function renderPriceHistory(el){
               <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap">
                 <span style="font-size:14px;font-weight:700;color:var(--text)">🏭 ${esc(o.supplierName||'(Chưa rõ NCC)')}</span>
                 ${o.poNumber?`<span style="font-size:11px;font-weight:700;color:var(--accent2);background:var(--bg2);padding:2px 8px;border-radius:20px">${esc(o.poNumber)}</span>`:''}
+                ${o.stage?`<span style="font-size:11px;font-weight:700;padding:2px 10px;border-radius:20px;${stageStyle(o.stage)}">${esc(o.stage)}</span>`:''}
               </div>
-              <div style="font-size:11px;color:var(--text3);margin-bottom:8px">📅 ${fmtPHDate(o.date||o.createdAt)} · ${o.items.length} mặt hàng${o.note?' · 📝 '+esc(o.note):''}</div>
+              <div style="font-size:11px;color:var(--text3);margin-bottom:6px">📅 Lập: ${fmtPHDate(o.date||o.createdAt)} · ${o.items.length} mặt hàng${o.note?' · 📝 '+esc(o.note):''}</div>
+              ${(o.orderDate||o.deliveryCommit)?`<div style="font-size:11px;color:var(--text2);margin-bottom:8px;background:var(--bg2);padding:5px 9px;border-radius:6px;display:inline-block">${o.orderDate?'📅 Đặt hàng: <b>'+fmtPHDate(o.orderDate)+'</b>':''}${o.orderDate&&o.deliveryCommit?' · ':''}${o.deliveryCommit?'🚚 Cam kết: <b>'+esc(o.deliveryCommit)+'</b>':''}</div>`:''}
               <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
                 <table style="width:100%;border-collapse:collapse;font-size:12px">
                   <thead><tr>
@@ -5981,13 +6339,23 @@ function openPriceModal(id){
   m.innerHTML=`
     <div style="background:var(--panel);border-radius:14px;padding:22px;max-width:880px;width:100%;margin:auto">
       <div style="font-size:16px;font-weight:700;margin-bottom:16px;color:var(--text)">${isEdit?'✏️ Sửa đơn mua':'➕ Tạo đơn mua / hợp đồng'}</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:14px">
         <div><label class="lbl">Nhà cung cấp <span style="color:var(--danger)">*</span></label>
           <input class="inp" id="pm-sup" list="pm-sup-list" value="${esc(order?.supplierName||'')}" placeholder="Chọn/nhập NCC">
           <datalist id="pm-sup-list">${supOpts}</datalist>
         </div>
         <div><label class="lbl">Số HĐ / Đơn mua</label><input class="inp" id="pm-po" value="${esc(order?.poNumber||'')}" placeholder="VD: PO-2026-001"></div>
-        <div><label class="lbl">Ngày mua</label><input class="inp" type="date" id="pm-date" value="${order?.date? order.date.slice(0,10) : new Date().toISOString().slice(0,10)}"></div>
+        <div><label class="lbl">Ngày lập</label><input class="inp" type="date" id="pm-date" value="${order?.date? order.date.slice(0,10) : new Date().toISOString().slice(0,10)}"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px;background:var(--bg2);padding:12px;border-radius:8px">
+        <div><label class="lbl">📊 Giai đoạn đơn hàng</label>
+          <select class="inp" id="pm-stage" style="width:100%" onchange="pmStageHint(this.value)">
+            ${['Đang lên hợp đồng','Ký hợp đồng','Đã đặt hàng','Đang sản xuất','Giao hàng','Hoàn thành'].map(st=>`<option value="${st}"${(order?.stage||'Đang lên hợp đồng')===st?' selected':''}>${st}</option>`).join('')}
+          </select>
+          <div id="pm-stage-hint" style="font-size:10.5px;color:var(--text3);margin-top:4px"></div>
+        </div>
+        <div><label class="lbl">📅 Ngày đặt hàng</label><input class="inp" type="date" id="pm-orderdate" value="${order?.orderDate? order.orderDate.slice(0,10):''}"></div>
+        <div><label class="lbl">🚚 Tiến độ cam kết (giao hàng)</label><input class="inp" id="pm-commit" value="${esc(order?.deliveryCommit||'')}" placeholder="VD: 10-12 tuần sau đặt hàng"></div>
       </div>
       <div style="margin-bottom:8px"><label class="lbl">Danh sách thiết bị đã mua</label></div>
       <div style="border:1px solid var(--border);border-radius:8px;overflow:auto">
@@ -6026,6 +6394,14 @@ function phRowSuggestCode(inp){
   }
 }
 
+// Hiển thị gợi ý theo giai đoạn
+function pmStageHint(stage){
+  const el=document.getElementById('pm-stage-hint');
+  if(!el)return;
+  if(stage==='Hoàn thành') el.innerHTML='✓ Khi lưu, hàng sẽ tự động cập nhật vào Hàng tồn kho.';
+  else el.innerHTML='';
+}
+
 function savePriceModal(id){
   const supplierName=(document.getElementById('pm-sup')?.value||'').trim();
   if(!supplierName){toast('Vui lòng nhập nhà cung cấp','error');return;}
@@ -6053,6 +6429,9 @@ function savePriceModal(id){
     supplierName,
     poNumber:(document.getElementById('pm-po')?.value||'').trim(),
     date:document.getElementById('pm-date')?.value||new Date().toISOString().slice(0,10),
+    stage:document.getElementById('pm-stage')?.value||'Đang lên hợp đồng',
+    orderDate:document.getElementById('pm-orderdate')?.value||'',
+    deliveryCommit:(document.getElementById('pm-commit')?.value||'').trim(),
     note:(document.getElementById('pm-note')?.value||'').trim(),
     items,
   };
@@ -7220,7 +7599,7 @@ async function doAddUser(){
   const users = getUsers();
   if(users[email]){ toast('Email này đã tồn tại','error'); return; }
   users[email] = {
-    name:fullname, pass:password, phone:phone||'',
+    name:fullname, pass:await hashPassword(password), phone:phone||'',
     role: ROLES.includes(role)?role:'sales',
     status:'approved', mustChangePassword:true,
     createdAt:new Date().toISOString(),
@@ -7243,7 +7622,7 @@ async function grantAccount(email){
   const tempPass = prompt('Đặt MẬT KHẨU TẠM cho '+ (u.name||email) +'\n(Người dùng sẽ được yêu cầu đổi mật khẩu ở lần đăng nhập đầu tiên):', 'kienthinh@123');
   if(tempPass===null) return;
   if((tempPass||'').length<6){ toast('Mật khẩu tạm phải từ 6 ký tự','error'); return; }
-  u.pass = tempPass;
+  u.pass = await hashPassword(tempPass);
   u.status = 'approved';
   u.mustChangePassword = true;
   if(!ROLES.includes(u.role)) u.role = 'sales';
@@ -7303,7 +7682,7 @@ async function resetUserPassword(email){
   const newPass = prompt('Đặt MẬT KHẨU MỚI cho '+(u.name||email)+'\n(Người dùng sẽ được yêu cầu đổi lại ở lần đăng nhập kế tiếp):','kienthinh@123');
   if(newPass===null) return;
   if((newPass||'').length<6){ toast('Mật khẩu phải từ 6 ký tự','error'); return; }
-  u.pass = newPass;
+  u.pass = await hashPassword(newPass);
   u.mustChangePassword = true;
   users[email] = u;
   saveUsers(users);
@@ -7509,6 +7888,7 @@ function exportAllData(){
     oc:   outContracts||[],
     so:   stockOut||[],
     si:   stockIn||[],
+    es:   estimates||[],
     calc: calcState||null,
   };
   const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
@@ -7533,7 +7913,7 @@ function importAndMergeData(inp){
       if(!confirm('File này có thể không phải bản sao lưu của phần mềm. Vẫn thử gộp?')){ inp.value=''; return; }
     }
     // Gộp theo id/mã, không ghi đè mục đang có
-    const merged={qs:0,pqs:0,cat:0,cust:0,sup:0,ph:0,tpl:0,oc:0,so:0,si:0};
+    const merged={qs:0,pqs:0,cat:0,cust:0,sup:0,ph:0,tpl:0,oc:0,so:0,si:0,es:0};
 
     // Báo giá — gộp theo id (hoặc num nếu thiếu id)
     if(Array.isArray(data.qs)){
@@ -7585,11 +7965,16 @@ function importAndMergeData(inp){
       const seen=new Set((stockIn||[]).map(s=>s.id));
       data.si.forEach(s=>{ if(s.id && !seen.has(s.id)){ stockIn.push(s); seen.add(s.id); merged.si++; } });
     }
+    // Báo giá dự toán — gộp theo id
+    if(Array.isArray(data.es)){
+      const seen=new Set((estimates||[]).map(o=>o.id));
+      data.es.forEach(o=>{ if(o.id && !seen.has(o.id)){ estimates.push(o); seen.add(o.id); merged.es++; } });
+    }
 
     // Lưu lại + đồng bộ lên kho chung
     ULS.set('qs',quotes); ULS.set('pqs',projects); ULS.set('cat',catalog);
     ULS.set('cust',customers); ULS.set('sup',suppliers); ULS.set('ph',priceHistory);
-    ULS.set('tpl',templates); ULS.set('oc',outContracts); ULS.set('so',stockOut); ULS.set('si',stockIn);
+    ULS.set('tpl',templates); ULS.set('oc',outContracts); ULS.set('so',stockOut); ULS.set('si',stockIn); ULS.set('es',estimates);
     sbAutoSync();
     inp.value='';
 
