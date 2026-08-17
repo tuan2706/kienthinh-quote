@@ -1365,8 +1365,22 @@ async function doLogin(){
 
   try{
     // Thử đồng bộ danh sách tài khoản mới nhất từ Drive trước khi kiểm tra (nếu có kết nối)
-    const users = await cloudGetUsers();
-    const u = users[email];
+    let users = await cloudGetUsers();
+    let u = users[email];
+
+    // Nếu KHÔNG tìm thấy tài khoản này trong danh sách local/hiện có,
+    // rất có thể máy này chưa kết nối Drive chung → thử kết nối Drive để tải
+    // danh sách tài khoản mới nhất (do admin tạo trên máy khác, lưu ở Drive).
+    if(!u && email !== ADMIN_EMAIL){
+      const token = await ensureDriveForLogin();
+      if(token){
+        users = await gdLoadUsers();   // đọc lại users.json từ Drive chung
+        u = users[email];
+      }else{
+        showAuthErr('⚠️ Máy này chưa kết nối kho dữ liệu công ty. Vui lòng bấm nút "Kết nối Google" (biểu tượng Google ở góc) và chọn tài khoản '+ (SHARED_GOOGLE_HINT||'chung của công ty') +' trước, rồi đăng nhập lại.');
+        return;
+      }
+    }
 
     // ════════════════════════════════════════════════════════════
     // ADMIN LUÔN ĐĂNG NHẬP ĐƯỢC — không bao giờ bị khoá ngoài.
@@ -2853,6 +2867,26 @@ async function gdGetToken() {
       else resolve(null);
     };
     gdTokenClient.requestAccessToken({ prompt: '' });
+  });
+}
+
+// Gợi ý tài khoản Google chung (hiện trong thông báo khi cần kết nối)
+const SHARED_GOOGLE_HINT = 'sales@kienthinh-eco.com';
+
+// Khi đăng nhập mà chưa có token: CHỦ ĐỘNG mở hộp thoại kết nối Google
+// để tải danh sách tài khoản từ Drive chung. Khác gdGetToken ở chỗ nó
+// hiện popup chọn tài khoản (prompt hiển thị) nếu chưa từng cho phép.
+async function ensureDriveForLogin() {
+  if (gdToken) return gdToken;
+  if (!gdTokenClient) return null;
+  return new Promise((resolve) => {
+    gdTokenClient.callback = (resp) => {
+      if (!resp.error) { gdToken = resp.access_token; resolve(gdToken); }
+      else resolve(null);
+    };
+    // prompt rỗng trước (silent). Nếu chưa cấp quyền, Google sẽ tự hiện popup.
+    try { gdTokenClient.requestAccessToken({ prompt: 'consent' }); }
+    catch(e){ resolve(null); }
   });
 }
 
