@@ -1559,6 +1559,10 @@ function loginUser(user,name){
   templates=ULS.get('tpl')||[];
   auditLog=ULS.get('log')||[];
   priceHistory=ULS.get('ph')||[];
+  outContracts=ULS.get('oc')||[];
+  stockOut=ULS.get('so')||[];
+  stockIn=ULS.get('si')||[];
+  estimates=ULS.get('es')||[];
   const saved=ULS.get('calc');
   if(saved)calcState={...calcState,...saved};
   // Load dữ liệu từ Drive nếu đã có token (async, không block UI)
@@ -5140,9 +5144,14 @@ function ocItemRowHtml(it){
   it=it||{};
   return `<tr class="oc-item-row">
     <td style="padding:4px"><input class="inp oc-it-name" list="oc-name-list" value="${esc(it.name||'')}" placeholder="Tên hàng" oninput="ocRowSuggest(this)" style="font-size:12px;min-width:140px"></td>
-    <td style="padding:4px"><input class="inp oc-it-code" value="${esc(it.code||'')}" placeholder="Mã" style="font-size:12px;width:88px"></td>
+    <td style="padding:4px"><input class="inp oc-it-code" value="${esc(it.code||'')}" placeholder="Mã SP (ưu tiên)" title="Nhập mã sản phẩm để tự điền tên" oninput="autoFillByCode(this.closest('tr'),{codeSel:'.oc-it-code',nameSel:'.oc-it-name'})" style="font-size:12px;width:88px;font-weight:600"></td>
     <td style="padding:4px"><input class="inp oc-it-qty" value="${it.qty||1}" placeholder="1" style="font-size:12px;width:44px;text-align:center" oninput="this.value=this.value.replace(/[^0-9]/g,'')"></td>
-    <td style="padding:4px"><input class="inp oc-it-buy" value="${it.buyPrice?Number(it.buyPrice).toLocaleString('vi-VN'):''}" placeholder="0" style="font-size:12px;width:100px;text-align:right" inputmode="numeric" oninput="onPriceInput(this)"></td>
+    <td style="padding:4px">
+      <div style="display:flex;gap:3px;align-items:center">
+        <input class="inp oc-it-buy" value="${it.buyPrice?Number(it.buyPrice).toLocaleString('vi-VN'):''}" placeholder="0" style="font-size:12px;width:80px;text-align:right" inputmode="numeric" oninput="onPriceInput(this)">
+        <button type="button" class="btn btn-g" style="padding:2px 5px;font-size:10px" title="Chọn từ lịch sử giá nhập theo mã" onclick="openOCPriceHistoryPicker(this)">📜</button>
+      </div>
+    </td>
     <td style="padding:4px"><input class="inp oc-it-sell" value="${it.sellPrice?Number(it.sellPrice).toLocaleString('vi-VN'):''}" placeholder="0" style="font-size:12px;width:100px;text-align:right;color:var(--success)" inputmode="numeric" oninput="onPriceInput(this)"></td>
     <td style="padding:4px"><select class="inp oc-it-cur" style="font-size:12px;width:58px">${['VND','USD','EUR'].map(cu=>`<option value="${cu}"${(it.currency||'VND')===cu?' selected':''}>${cu}</option>`).join('')}</select></td>
     <td style="padding:4px"><input class="inp oc-it-project" value="${esc(it.project||'')}" placeholder="Dự án / HĐ" style="font-size:12px;min-width:120px"></td>
@@ -5208,6 +5217,71 @@ function ocRowSuggest(inp){
     if(codeEl && !codeEl.value) codeEl.value=hit.code||'';
     if(buyEl && !buyEl.value && hit.cost>0) buyEl.value=Number(hit.cost).toLocaleString('vi-VN');
   }
+}
+
+// Tra toàn bộ lịch sử giá NHẬP (từ Hợp đồng đầu vào) theo MÃ SẢN PHẨM,
+// cho user chọn 1 lần mua để tự điền Giá nhập vào hợp đồng đầu ra.
+function findPurchaseHistoryByCode(code){
+  const k=normCode(code);
+  if(!k) return [];
+  const rows=[];
+  (priceHistory||[]).forEach(o=>{
+    (o.items||[]).forEach(it=>{
+      if(normCode(it.code)===k){
+        rows.push({
+          contractNo:o.poNumber||'(chưa có số)', supplierName:o.supplierName||'',
+          price:it.price||0, currency:it.currency||'VND',
+          date:o.date||o.createdAt,
+        });
+      }
+    });
+  });
+  rows.sort((a,b)=>new Date(b.date||0)-new Date(a.date||0));
+  return rows;
+}
+
+function openOCPriceHistoryPicker(btn){
+  const tr=btn.closest('tr');
+  const codeEl=tr?.querySelector('.oc-it-code');
+  const code=(codeEl?.value||'').trim();
+  if(!code){ toast('Vui lòng nhập Mã sản phẩm trước','error'); return; }
+  const rows=findPurchaseHistoryByCode(code);
+  if(!rows.length){ toast('Chưa có lịch sử giá nhập cho mã "'+code+'"','warning'); return; }
+
+  const old=document.getElementById('oc-ph-picker'); if(old)old.remove();
+  const m=document.createElement('div');
+  m.id='oc-ph-picker';
+  m.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px';
+  m.innerHTML=`
+    <div style="background:var(--panel);border-radius:14px;padding:20px;max-width:460px;width:100%">
+      <div style="font-size:14px;font-weight:700;margin-bottom:4px;color:var(--text)">📜 Lịch sử giá nhập — Mã ${esc(code)}</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:12px">Chọn 1 lần mua để tự điền Giá nhập. Giá bán bạn vẫn tự nhập.</div>
+      <div style="display:flex;flex-direction:column;gap:6px;max-height:320px;overflow:auto">
+        ${rows.map((r,i)=>`
+        <button type="button" class="btn btn-g" style="text-align:left;padding:9px 12px;display:flex;justify-content:space-between;align-items:center;gap:10px" onclick="pickOCPrice(this,${esc(JSON.stringify(r.price))},'${esc(r.currency)}')">
+          <span style="font-size:12px">
+            <b>${esc(r.contractNo)}</b>${r.supplierName?' · '+esc(r.supplierName):''}<br>
+            <span style="color:var(--text3);font-size:10.5px">${r.date?new Date(r.date).toLocaleDateString('vi-VN'):''}</span>
+          </span>
+          <span style="font-weight:800;color:var(--accent2);white-space:nowrap">${Number(r.price).toLocaleString('vi-VN')} ${r.currency==='USD'?'$':r.currency==='EUR'?'€':'₫'}</span>
+        </button>`).join('')}
+      </div>
+      <div style="text-align:right;margin-top:12px"><button class="btn btn-g" onclick="document.getElementById('oc-ph-picker').remove()">Đóng</button></div>
+    </div>`;
+  m._srcRow=tr;
+  document.body.appendChild(m);
+}
+function pickOCPrice(btn,price,currency){
+  const picker=document.getElementById('oc-ph-picker');
+  const tr=picker?._srcRow;
+  if(tr){
+    const buyEl=tr.querySelector('.oc-it-buy');
+    const curEl=tr.querySelector('.oc-it-cur');
+    if(buyEl) buyEl.value=Number(price).toLocaleString('vi-VN');
+    if(curEl) curEl.value=currency;
+  }
+  picker?.remove();
+  toast('Đã điền giá nhập','success');
 }
 
 function saveOCModal(id){
@@ -5407,6 +5481,30 @@ function invRowHtml(m){
 
 function invKey(name,code){ return stripVN(code||'') || stripVN(name||''); }
 
+// ── MÃ SẢN PHẨM = khoá nhận diện chính ──────────────────────
+// Chuẩn hoá mã: cắt khoảng trắng đầu/cuối, so sánh không phân biệt hoa/thường.
+// Không tự ý đổi mã hiển thị của người dùng — chỉ dùng để SO SÁNH/TÌM.
+function normCode(code){ return (code||'').trim().toLowerCase(); }
+// Tìm sản phẩm trong danh mục theo MÃ (ưu tiên tuyệt đối so với tên)
+function findByCode(code){
+  const k = normCode(code);
+  if(!k) return null;
+  return catalog.find(c=>normCode(c.code)===k) || null;
+}
+// Điền tự động Tên/Hãng/Giá vào 1 dòng khi người dùng gõ MÃ sản phẩm.
+// selectors: {codeSel, nameSel, brandSel, priceSel} — class CSS trong dòng <tr>.
+function autoFillByCode(tr, sel){
+  if(!tr) return;
+  const codeEl = tr.querySelector(sel.codeSel);
+  const hit = findByCode(codeEl?.value);
+  if(!hit) return;
+  const nameEl = tr.querySelector(sel.nameSel);
+  if(nameEl) nameEl.value = hit.name||'';
+  if(sel.brandSel){ const brandEl=tr.querySelector(sel.brandSel); if(brandEl) brandEl.value = hit.brand||''; }
+  if(sel.priceSel){ const priceEl=tr.querySelector(sel.priceSel); if(priceEl && !priceEl.value && hit.cost>0) priceEl.value = Number(hit.cost).toLocaleString('vi-VN'); }
+  return hit;
+}
+
 // Tổng hợp tồn kho theo từng mặt hàng
 function computeInventory(){
   const map={}; // key -> {key,name,code,brand,inQty,outQty,contracts:Set,projects:Set,lastDate}
@@ -5577,7 +5675,7 @@ function openStockInModal(id){
           <input class="inp" id="si-name" list="si-name-list" value="${esc(s?.name||'')}" placeholder="Tên thiết bị" oninput="siFillFromCatalog(this)" style="width:100%">
           <datalist id="si-name-list">${catalog.map(c=>`<option value="${esc(c.name)}">`).join('')}</datalist>
         </div>
-        <div><label class="lbl">Mã hàng</label><input class="inp" id="si-code" value="${esc(s?.code||'')}" placeholder="Mã" style="width:100%"></div>
+        <div><label class="lbl">Mã hàng (nhập trước để tự điền tên/hãng)</label><input class="inp" id="si-code" value="${esc(s?.code||'')}" placeholder="Mã sản phẩm" oninput="siFillFromCode(this)" style="width:100%;font-weight:600"></div>
       </div>
       <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-bottom:12px">
         <div><label class="lbl">Hãng sản xuất</label><input class="inp" id="si-brand" value="${esc(s?.brand||'')}" placeholder="VD: Endress+Hauser - Đức" style="width:100%"></div>
@@ -5606,6 +5704,16 @@ function siFillFromCatalog(inp){
     const brandEl=document.getElementById('si-brand');
     if(codeEl && !codeEl.value) codeEl.value=hit.code||'';
     if(brandEl && !brandEl.value) brandEl.value=hit.brand||'';
+  }
+}
+// Nhập MÃ trước → tự điền Tên + Hãng (mã là khoá nhận diện chính)
+function siFillFromCode(inp){
+  const hit=findByCode(inp.value);
+  if(hit){
+    const nameEl=document.getElementById('si-name');
+    const brandEl=document.getElementById('si-brand');
+    if(nameEl) nameEl.value=hit.name||'';
+    if(brandEl) brandEl.value=hit.brand||'';
   }
 }
 
@@ -5778,7 +5886,7 @@ function esItemRowHtml(it){
   it=it||{};
   return `<tr class="es-item-row">
     <td style="padding:4px"><input class="inp es-it-name" list="es-name-list" value="${esc(it.name||'')}" placeholder="Tên hàng" oninput="esRowSuggest(this)" style="font-size:12px;min-width:150px"></td>
-    <td style="padding:4px"><input class="inp es-it-code" value="${esc(it.code||'')}" placeholder="Mã" style="font-size:12px;width:96px"></td>
+    <td style="padding:4px"><input class="inp es-it-code" value="${esc(it.code||'')}" placeholder="Mã SP (ưu tiên)" title="Nhập mã sản phẩm để tự điền tên" oninput="autoFillByCode(this.closest('tr'),{codeSel:'.es-it-code',nameSel:'.es-it-name'})" style="font-size:12px;width:96px;font-weight:600"></td>
     <td style="padding:4px"><input class="inp es-it-qty" value="${it.qty||1}" placeholder="1" style="font-size:12px;width:48px;text-align:center" oninput="this.value=this.value.replace(/[^0-9]/g,'')"></td>
     <td style="padding:4px"><input class="inp es-it-price" value="${it.price?Number(it.price).toLocaleString('vi-VN'):''}" placeholder="0" style="font-size:12px;width:116px;text-align:right" inputmode="numeric" oninput="onPriceInput(this)"></td>
     <td style="padding:4px"><select class="inp es-it-cur" style="font-size:12px;width:62px">${['VND','USD','EUR'].map(cu=>`<option value="${cu}"${(it.currency||'VND')===cu?' selected':''}>${cu}</option>`).join('')}</select></td>
@@ -6457,7 +6565,7 @@ function phItemRowHtml(it){
   it = it||{};
   return `<tr class="ph-item-row">
     <td style="padding:4px"><input class="inp ph-it-name" list="ph-name-list" value="${esc(it.name||'')}" placeholder="Tên thiết bị" oninput="phRowSuggestCode(this)" style="font-size:12px;min-width:140px"></td>
-    <td style="padding:4px"><input class="inp ph-it-code" value="${esc(it.code||'')}" placeholder="Mã" style="font-size:12px;width:90px"></td>
+    <td style="padding:4px"><input class="inp ph-it-code" value="${esc(it.code||'')}" placeholder="Mã SP (ưu tiên)" title="Nhập mã sản phẩm để tự điền tên/hãng" oninput="autoFillByCode(this.closest('tr'),{codeSel:'.ph-it-code',nameSel:'.ph-it-name'})" style="font-size:12px;width:90px;font-weight:600"></td>
     <td style="padding:4px"><input class="inp ph-it-qty" value="${it.qty||1}" placeholder="1" style="font-size:12px;width:46px;text-align:center" oninput="this.value=this.value.replace(/[^0-9]/g,'')"></td>
     <td style="padding:4px"><input class="inp ph-it-price" value="${it.price?Number(it.price).toLocaleString('vi-VN'):''}" placeholder="0" style="font-size:12px;width:110px;text-align:right" inputmode="numeric" oninput="onPriceInput(this)"></td>
     <td style="padding:4px"><select class="inp ph-it-cur" style="font-size:12px;width:60px">${['VND','USD','EUR'].map(c=>`<option value="${c}"${(it.currency||'VND')===c?' selected':''}>${c}</option>`).join('')}</select></td>
@@ -6841,6 +6949,7 @@ function importSupExcel(inp){
 }
 
 // ── CATALOG PAGE ─────────────────────────────────────────────
+let _catSearch=''; // giữ trạng thái tìm kiếm qua các lần Sửa/Xoá (không reset về đầu)
 function renderCatalog(el){
   const total=catalog.length;
   const brands=[...new Set(catalog.map(p=>p.brand).filter(Boolean))].length;
@@ -6859,7 +6968,7 @@ function renderCatalog(el){
           <button class="btn btn-p" onclick="openAddCatModal()" style="font-size:13px;padding:9px 18px">➕ Thêm sản phẩm</button>
           <button class="btn btn-d" onclick="document.getElementById('xl-inp').click()">📥 Import Excel</button>
           <button class="btn btn-g" onclick="downloadTemplate()">⬇ File mẫu</button>
-          ${catalog.length?`<button class="btn btn-g" style="color:#A32D2D" onclick="if(confirm('Xoá toàn bộ danh mục?')){catalog=[];ULS.set(KEYS.cat,catalog);renderCatalog(document.getElementById('content'));toast('Đã xoá danh mục','warning');}">🗑 Xoá tất cả</button>`:''}
+          ${catalog.length?`<button class="btn btn-g" style="color:#A32D2D" onclick="if(confirm('Xoá toàn bộ danh mục?')){catalog=[];_catSearch='';ULS.set(KEYS.cat,catalog);sbAutoSync();renderCatalog(document.getElementById('content'));toast('Đã xoá danh mục','warning');}">🗑 Xoá tất cả</button>`:''}
         </div>
       </div>
       <div style="min-width:220px">
@@ -6878,13 +6987,9 @@ function renderCatalog(el){
     ${total?`
     <div class="abar" style="margin-bottom:12px">
       <button class="btn btn-p" onclick="openAddCatModal()">➕ Thêm sản phẩm</button>
-      <input class="inp" id="cat-q" placeholder="🔍  Tìm theo mã, tên, hãng..." oninput="renderCatTableDb(this.value)" style="max-width:320px;flex:1">
+      <input class="inp" id="cat-q" value="${esc(_catSearch)}" placeholder="🔍  Tìm theo mã, tên, hãng..." oninput="_catSearch=this.value;keepSearchFocus('cat-q',()=>{renderCatTable(this.value);updateCatStats();})" style="max-width:320px;flex:1">
     </div>
-    <div class="cat-stats">
-      <div class="cat-stat"><b>${total}</b>Thiết bị</div>
-      ${brands?`<div class="cat-stat"><b>${brands}</b>Hãng/Nhãn</div>`:''}
-      <div class="cat-stat"><b>${fm(Math.min(...catalog.map(p=>+p.price||0).filter(p=>p>0)),'VND')} – ${fm(Math.max(...catalog.map(p=>+p.price||0)),'VND')}</b>Khoảng giá</div>
-    </div>
+    <div class="cat-stats" id="cat-stats-box">${catStatsHtml()}</div>
 
     <div class="cat-table-wrap">
       <table class="cat-table" id="cat-tbl">
@@ -6899,25 +7004,47 @@ function renderCatalog(el){
       <button class="btn btn-p" style="margin-top:4px" onclick="openAddCatModal()">➕ Thêm sản phẩm đầu tiên</button>
     </div>`}
   </div>`;
-  if(total)renderCatTable('');
+  if(total)renderCatTable(_catSearch||'');
 }
+function catStatsHtml(){
+  const total=catalog.length;
+  const brands=[...new Set(catalog.map(p=>p.brand).filter(Boolean))].length;
+  if(!total) return '';
+  return `<div class="cat-stat"><b>${total}</b>Thiết bị</div>
+    ${brands?`<div class="cat-stat"><b>${brands}</b>Hãng/Nhãn</div>`:''}
+    <div class="cat-stat"><b>${fm(Math.min(...catalog.map(p=>+p.price||0).filter(p=>p>0)),'VND')} – ${fm(Math.max(...catalog.map(p=>+p.price||0)),'VND')}</b>Khoảng giá</div>`;
+}
+function updateCatStats(){ const box=document.getElementById('cat-stats-box'); if(box) box.innerHTML=catStatsHtml(); }
 function renderCatTable(q){
-  const kw=q.toLowerCase();
+  const kw=(q||'').toLowerCase();
   const list=kw?catalog.filter(p=>(p.code||'').toLowerCase().includes(kw)||(p.name||'').toLowerCase().includes(kw)||(p.brand||'').toLowerCase().includes(kw)):catalog;
   const hl=s=>kw&&s?s.replace(new RegExp('('+kw.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')','gi'),'<mark class="highlight">$1</mark>'):esc(s||'');
   const tb=document.getElementById('cat-tbody');if(!tb)return;
-  tb.innerHTML=list.slice(0,200).map((p,i)=>`<tr style="cursor:pointer" onclick="openProductDetail(${catalog.indexOf(p)})">
+  tb.innerHTML=list.slice(0,200).map((p)=>{
+    const realIdx=catalog.indexOf(p); // LUÔN dùng chỉ số thật trong catalog (không dùng chỉ số vòng lặp) — tránh sửa/xoá nhầm sản phẩm khi đang lọc
+    return `<tr style="cursor:pointer" onclick="openProductDetail(${realIdx})">
     <td style="font-weight:700;color:var(--accent2)">${hl(p.code)}</td>
     <td>${hl(p.name)}</td>
     <td style="color:var(--muted)">${esc(p.unit||'')}</td>
     <td style="font-weight:600">${p.price?fm(+p.price,'VND'):''}</td>
     <td style="color:var(--text2);font-size:11px">${esc(p.brand||'')}</td>
     <td style="color:var(--muted);font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.specs||'')}</td>
-    <td onclick="event.stopPropagation()"><button class="btn btn-g" style="padding:3px 8px;font-size:10px" onclick="editCatRow(${i})">✏️</button>
-        <button class="btn btn-g" style="padding:3px 8px;font-size:10px;color:#A32D2D" onclick="delCatRow(${catalog.indexOf(p)})">✕</button></td>
-  </tr>`).join('')+(list.length>200?`<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:10px">... và ${list.length-200} thiết bị khác</td></tr>`:'');
+    <td onclick="event.stopPropagation()"><button class="btn btn-g" style="padding:3px 8px;font-size:10px" onclick="editCatRow(${realIdx})">✏️</button>
+        <button class="btn btn-g" style="padding:3px 8px;font-size:10px;color:#A32D2D" onclick="delCatRow(${realIdx})">✕</button></td>
+  </tr>`;}).join('')+(list.length>200?`<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:10px">... và ${list.length-200} thiết bị khác</td></tr>`:'');
 }
-function delCatRow(i){const p=catalog[i];catalog.splice(i,1);ULS.set(KEYS.cat,catalog);renderCatalog(document.getElementById('content'));toast('Đã xoá','warning');logAction('Xoá sản phẩm',p?.name||'',p?.code||'');}
+// Xoá 1 sản phẩm — CHỈ vẽ lại bảng + số liệu, GIỮ NGUYÊN ô tìm kiếm đang gõ (không nhảy về đầu danh sách)
+function delCatRow(i){
+  const p=catalog[i];
+  if(!confirm('Xoá sản phẩm "'+(p?.name||'')+'"'+(p?.code?' (Mã: '+p.code+')':'')+'?'))return;
+  catalog.splice(i,1);
+  ULS.set(KEYS.cat,catalog); sbAutoSync();
+  toast('Đã xoá','warning');
+  logAction('Xoá sản phẩm',p?.name||'',p?.code||'');
+  if(catalog.length===0){ renderCatalog(document.getElementById('content')); return; } // hết sạch → cần vẽ lại trạng thái rỗng
+  renderCatTable(_catSearch||'');
+  updateCatStats();
+}
 
 // ── PRODUCT HISTORY (tính từ lịch sử báo giá, không cần lưu thêm dữ liệu) ──
 function productSalesStats(product){
@@ -7127,7 +7254,7 @@ function isDupItem(a,b){
   return an && bn && an===bn;
 }
 
-function saveCatModal(editIdx){
+async function saveCatModal(editIdx){
   const name = document.getElementById('cm-name')?.value.trim();
   if(!name){ toast('Vui lòng nhập tên thiết bị','error'); return; }
 
@@ -7142,11 +7269,28 @@ function saveCatModal(editIdx){
     image: window._catImgData || '',
   };
 
+  // Làm mới danh mục từ Drive trước khi kiểm tra trùng mã — giảm rủi ro 2 người
+  // cùng tạo 1 mã gần như cùng lúc trên 2 máy khác nhau (race condition).
+  try{
+    const token = await gdGetToken();
+    if(token){
+      const cloud = await gdLoadUserData(currentUser);
+      if(cloud && Array.isArray(cloud.cat)){
+        const localKeys = new Set(catalog.map(c=>normCode(c.code)||stripVN(c.name||'')));
+        cloud.cat.forEach(c=>{
+          const k = normCode(c.code)||stripVN(c.name||'');
+          if(k && !localKeys.has(k)){ catalog.push(c); localKeys.add(k); }
+        });
+      }
+    }
+  }catch(e){ /* mạng lỗi thì vẫn cho lưu với dữ liệu hiện có, không chặn người dùng */ }
+
   if(editIdx >= 0 && editIdx < catalog.length){
     // Kiểm tra trùng với các sản phẩm khác (không tính chính nó đang sửa)
     const dup = catalog.findIndex((p,i)=>i!==editIdx && isDupItem(p,item));
     if(dup>=0){
-      toast('❌ Trùng sản phẩm','error', (item.code?'Mã "'+item.code+'"':'Tên "'+item.name+'"')+' đã tồn tại trong danh mục. Không thể lưu.');
+      const dp=catalog[dup];
+      toast('❌ Mã/tên sản phẩm đã tồn tại','error', 'Trùng với: '+esc(dp.name||'')+(dp.code?' (Mã: '+dp.code+')':'')+(dp.brand?' · '+dp.brand:''));
       return;
     }
     catalog[editIdx] = item;
@@ -7156,7 +7300,7 @@ function saveCatModal(editIdx){
     // Kiểm tra trùng mã / tên trước khi thêm mới
     const dup = catalog.find(p=>isDupItem(p,item));
     if(dup){
-      toast('❌ Trùng sản phẩm','error', (item.code?'Mã "'+item.code+'"':'Tên "'+item.name+'"')+' đã tồn tại trong danh mục. Không thể thêm.');
+      toast('❌ Sản phẩm đã tồn tại','error', 'Trùng với: '+esc(dup.name||'')+(dup.code?' (Mã: '+dup.code+')':'')+(dup.brand?' · '+dup.brand:''));
       return;
     }
     catalog.unshift(item); // thêm lên đầu
@@ -7167,7 +7311,13 @@ function saveCatModal(editIdx){
   ULS.set(KEYS.cat, catalog);
   sbAutoSync();
   document.getElementById('cat-modal-form')?.remove();
-  renderCatalog(document.getElementById('content'));
+  // Chỉ vẽ lại bảng + số liệu, GIỮ NGUYÊN ô tìm kiếm đang lọc (không nhảy về đầu danh sách)
+  if(document.getElementById('cat-tbody')){
+    renderCatTable(_catSearch||'');
+    updateCatStats();
+  }else{
+    renderCatalog(document.getElementById('content')); // lần đầu chưa có bảng (đang ở empty-state) → vẽ lại toàn khối
+  }
 }
 
 function importExcel(inp){
@@ -7752,7 +7902,7 @@ async function doAddUser(){
   }
   if(!validateEmail(email)){ toast('Email không hợp lệ','error'); return; }
   if(password.length<6){ toast('Mật khẩu phải từ 6 ký tự','error'); return; }
-  const users = getUsers();
+  const users = await cloudGetUsers();
   if(users[email]){ toast('Email này đã tồn tại','error'); return; }
   users[email] = {
     name:fullname, pass:await hashPassword(password), phone:phone||'',
@@ -7772,7 +7922,7 @@ async function doAddUser(){
 
 // Cấp tài khoản: admin đặt mật khẩu tạm, người dùng sẽ đổi ở lần đăng nhập đầu
 async function grantAccount(email){
-  const users = getUsers();
+  const users = await cloudGetUsers();
   const u = users[email];
   if(!u){ toast('Không tìm thấy tài khoản','error'); return; }
   const tempPass = prompt('Đặt MẬT KHẨU TẠM cho '+ (u.name||email) +'\n(Người dùng sẽ được yêu cầu đổi mật khẩu ở lần đăng nhập đầu tiên):', 'kienthinh@123');
@@ -7792,7 +7942,7 @@ async function grantAccount(email){
 async function changeUserRole(email, role){
   if(email===ADMIN_EMAIL) return;
   if(!ROLES.includes(role)) return;
-  const users = getUsers();
+  const users = await cloudGetUsers();
   if(!users[email]) return;
   users[email].role = role;
   saveUsers(users);
@@ -7801,7 +7951,7 @@ async function changeUserRole(email, role){
 }
 
 async function rejectUser(email){
-  const users = getUsers();
+  const users = await cloudGetUsers();
   if(!users[email]){ toast('Không tìm thấy tài khoản','error'); return; }
   users[email].status='rejected';
   saveUsers(users);
@@ -7812,7 +7962,7 @@ async function rejectUser(email){
 
 async function lockUser(email){
   if(email===ADMIN_EMAIL){ toast('Không thể khoá tài khoản admin','error'); return; }
-  const users = getUsers();
+  const users = await cloudGetUsers();
   if(!users[email]) return;
   users[email].status='locked';
   saveUsers(users);
@@ -7822,7 +7972,7 @@ async function lockUser(email){
 }
 
 async function unlockUser(email){
-  const users = getUsers();
+  const users = await cloudGetUsers();
   if(!users[email]) return;
   users[email].status='approved';
   saveUsers(users);
@@ -7832,7 +7982,7 @@ async function unlockUser(email){
 }
 
 async function resetUserPassword(email){
-  const users = getUsers();
+  const users = await cloudGetUsers();
   const u = users[email];
   if(!u){ toast('Không tìm thấy tài khoản','error'); return; }
   const newPass = prompt('Đặt MẬT KHẨU MỚI cho '+(u.name||email)+'\n(Người dùng sẽ được yêu cầu đổi lại ở lần đăng nhập kế tiếp):','kienthinh@123');
@@ -7849,7 +7999,7 @@ async function resetUserPassword(email){
 
 async function deleteUser(email, name){
   if(!confirm('XÓA tài khoản '+(name||email)+'?')) return;
-  const users = getUsers();
+  const users = await cloudGetUsers();
   delete users[email];
   saveUsers(users);
   ['qs','co','cat','calc'].forEach(k=>LS.del('bgpro:'+email+':'+k));
