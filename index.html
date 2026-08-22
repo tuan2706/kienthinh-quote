@@ -5144,7 +5144,12 @@ function ocItemRowHtml(it){
   it=it||{};
   return `<tr class="oc-item-row">
     <td style="padding:4px"><input class="inp oc-it-name" list="oc-name-list" value="${esc(it.name||'')}" placeholder="Tên hàng" oninput="ocRowSuggest(this)" style="font-size:12px;min-width:140px"></td>
-    <td style="padding:4px"><input class="inp oc-it-code" value="${esc(it.code||'')}" placeholder="Mã SP (ưu tiên)" title="Nhập mã sản phẩm để tự điền tên" oninput="autoFillByCode(this.closest('tr'),{codeSel:'.oc-it-code',nameSel:'.oc-it-name'})" style="font-size:12px;width:88px;font-weight:600"></td>
+    <td style="padding:4px">
+      <div style="display:flex;gap:3px;align-items:center">
+        <input class="inp oc-it-code" list="oc-code-list" value="${esc(it.code||'')}" placeholder="Mã SP (ưu tiên)" title="Chọn mã có sẵn hoặc nhập mã mới" oninput="autoFillByCode(this.closest('tr'),{codeSel:'.oc-it-code',nameSel:'.oc-it-name'})" style="font-size:12px;width:82px;font-weight:600">
+        <button type="button" class="btn btn-g" style="padding:2px 4px;font-size:10px" title="Mã mới → lưu vào Danh mục sản phẩm" onclick="quickSaveToCatalog(this,{codeSel:'.oc-it-code',nameSel:'.oc-it-name'})">💾</button>
+      </div>
+    </td>
     <td style="padding:4px"><input class="inp oc-it-qty" value="${it.qty||1}" placeholder="1" style="font-size:12px;width:44px;text-align:center" oninput="this.value=this.value.replace(/[^0-9]/g,'')"></td>
     <td style="padding:4px">
       <div style="display:flex;gap:3px;align-items:center">
@@ -5196,6 +5201,7 @@ function openOCModal(id){
         </table>
       </div>
       <datalist id="oc-name-list">${catalog.map(c=>`<option value="${esc(c.name)}">`).join('')}</datalist>
+      <datalist id="oc-code-list">${catCodeOptionsHtml()}</datalist>
       <button class="pq-add-row" style="margin-top:10px" onclick="document.getElementById('oc-items-body').insertAdjacentHTML('beforeend', ocItemRowHtml({}))">＋ Thêm hàng hóa</button>
       <div style="margin-top:14px"><label class="lbl">Ghi chú hợp đồng</label><input class="inp" id="oc-note" value="${esc(c?.note||'')}" placeholder="VD: điều kiện giao hàng, bảo hành..."></div>
       <div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end">
@@ -5479,6 +5485,35 @@ function invRowHtml(m){
   </tr>`;
 }
 
+// Sinh <option> cho datalist chọn Mã sản phẩm có sẵn (kèm tên/hãng để dễ nhận biết khi gõ)
+function catCodeOptionsHtml(){
+  return catalog.filter(c=>c.code).map(c=>
+    `<option value="${esc(c.code)}">${esc(c.code)} — ${esc(c.name||'')}${c.brand?' ('+esc(c.brand)+')':''}</option>`
+  ).join('');
+}
+// Lưu 1 mã sản phẩm MỚI (chưa có trong Danh mục) từ dòng đang nhập, để lần sau dùng lại được luôn.
+// sel: {codeSel, nameSel, brandSel?, priceSel?} — các class trong <tr> hoặc modal chứa input.
+function quickSaveToCatalog(btn, sel){
+  const scope = btn.closest('tr') || btn.closest('.card') || document;
+  const code = (scope.querySelector(sel.codeSel)?.value||'').trim();
+  const name = (scope.querySelector(sel.nameSel)?.value||'').trim();
+  if(!code){ toast('Vui lòng nhập Mã sản phẩm trước','error'); return; }
+  if(!name){ toast('Vui lòng nhập Tên sản phẩm trước','error'); return; }
+  const existed = findByCode(code);
+  if(existed){ toast('Mã đã có trong danh mục','warning', existed.name||''); return; }
+  const brand = sel.brandSel ? (scope.querySelector(sel.brandSel)?.value||'').trim() : '';
+  const priceRaw = sel.priceSel ? (scope.querySelector(sel.priceSel)?.value||'') : '';
+  const price = priceRaw ? parseMoney(priceRaw) : 0;
+  const item = {code, name, unit:'', price:0, brand, cost:price, specs:'', image:''};
+  const dup = catalog.find(p=>isDupItem(p,item));
+  if(dup){ toast('Trùng với sản phẩm đã có','warning', dup.name+(dup.code?' (Mã: '+dup.code+')':'')); return; }
+  catalog.unshift(item);
+  ULS.set(KEYS.cat, catalog);
+  sbAutoSync();
+  toast('✅ Đã lưu vào Danh mục sản phẩm','success', code+' — '+name);
+  logAction('Thêm sản phẩm (từ nhập nhanh)', name, code);
+}
+
 function invKey(name,code){ return stripVN(code||'') || stripVN(name||''); }
 
 // ── MÃ SẢN PHẨM = khoá nhận diện chính ──────────────────────
@@ -5675,7 +5710,13 @@ function openStockInModal(id){
           <input class="inp" id="si-name" list="si-name-list" value="${esc(s?.name||'')}" placeholder="Tên thiết bị" oninput="siFillFromCatalog(this)" style="width:100%">
           <datalist id="si-name-list">${catalog.map(c=>`<option value="${esc(c.name)}">`).join('')}</datalist>
         </div>
-        <div><label class="lbl">Mã hàng (nhập trước để tự điền tên/hãng)</label><input class="inp" id="si-code" value="${esc(s?.code||'')}" placeholder="Mã sản phẩm" oninput="siFillFromCode(this)" style="width:100%;font-weight:600"></div>
+        <div><label class="lbl">Mã hàng (chọn có sẵn hoặc nhập mã mới)</label>
+          <div style="display:flex;gap:5px;align-items:center">
+            <input class="inp" id="si-code" list="si-code-list" value="${esc(s?.code||'')}" placeholder="Mã sản phẩm" oninput="siFillFromCode(this)" style="width:100%;font-weight:600">
+            <button type="button" class="btn btn-g" style="padding:6px 8px;font-size:11px;white-space:nowrap" title="Mã mới → lưu vào Danh mục sản phẩm" onclick="quickSaveToCatalog(this,{codeSel:'#si-code',nameSel:'#si-name',brandSel:'#si-brand'})">💾</button>
+          </div>
+          <datalist id="si-code-list">${catCodeOptionsHtml()}</datalist>
+        </div>
       </div>
       <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-bottom:12px">
         <div><label class="lbl">Hãng sản xuất</label><input class="inp" id="si-brand" value="${esc(s?.brand||'')}" placeholder="VD: Endress+Hauser - Đức" style="width:100%"></div>
@@ -5886,7 +5927,12 @@ function esItemRowHtml(it){
   it=it||{};
   return `<tr class="es-item-row">
     <td style="padding:4px"><input class="inp es-it-name" list="es-name-list" value="${esc(it.name||'')}" placeholder="Tên hàng" oninput="esRowSuggest(this)" style="font-size:12px;min-width:150px"></td>
-    <td style="padding:4px"><input class="inp es-it-code" value="${esc(it.code||'')}" placeholder="Mã SP (ưu tiên)" title="Nhập mã sản phẩm để tự điền tên" oninput="autoFillByCode(this.closest('tr'),{codeSel:'.es-it-code',nameSel:'.es-it-name'})" style="font-size:12px;width:96px;font-weight:600"></td>
+    <td style="padding:4px">
+      <div style="display:flex;gap:3px;align-items:center">
+        <input class="inp es-it-code" list="es-code-list" value="${esc(it.code||'')}" placeholder="Mã SP (ưu tiên)" title="Chọn mã có sẵn hoặc nhập mã mới" oninput="autoFillByCode(this.closest('tr'),{codeSel:'.es-it-code',nameSel:'.es-it-name'})" style="font-size:12px;width:90px;font-weight:600">
+        <button type="button" class="btn btn-g" style="padding:2px 4px;font-size:10px" title="Mã mới → lưu vào Danh mục sản phẩm" onclick="quickSaveToCatalog(this,{codeSel:'.es-it-code',nameSel:'.es-it-name'})">💾</button>
+      </div>
+    </td>
     <td style="padding:4px"><input class="inp es-it-qty" value="${it.qty||1}" placeholder="1" style="font-size:12px;width:48px;text-align:center" oninput="this.value=this.value.replace(/[^0-9]/g,'')"></td>
     <td style="padding:4px"><input class="inp es-it-price" value="${it.price?Number(it.price).toLocaleString('vi-VN'):''}" placeholder="0" style="font-size:12px;width:116px;text-align:right" inputmode="numeric" oninput="onPriceInput(this)"></td>
     <td style="padding:4px"><select class="inp es-it-cur" style="font-size:12px;width:62px">${['VND','USD','EUR'].map(cu=>`<option value="${cu}"${(it.currency||'VND')===cu?' selected':''}>${cu}</option>`).join('')}</select></td>
@@ -5930,6 +5976,7 @@ function openEstimateModal(id){
         </table>
       </div>
       <datalist id="es-name-list">${catalog.map(c=>`<option value="${esc(c.name)}">`).join('')}</datalist>
+      <datalist id="es-code-list">${catCodeOptionsHtml()}</datalist>
       <button class="pq-add-row" style="margin-top:10px" onclick="document.getElementById('es-items-body').insertAdjacentHTML('beforeend', esItemRowHtml({}))">＋ Thêm hàng</button>
       <div style="margin-top:14px"><label class="lbl">Ghi chú</label><input class="inp" id="es-note" value="${esc(o?.note||'')}" placeholder="VD: giá đã gồm VAT, điều kiện giao..."></div>
       <div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end">
@@ -6565,7 +6612,12 @@ function phItemRowHtml(it){
   it = it||{};
   return `<tr class="ph-item-row">
     <td style="padding:4px"><input class="inp ph-it-name" list="ph-name-list" value="${esc(it.name||'')}" placeholder="Tên thiết bị" oninput="phRowSuggestCode(this)" style="font-size:12px;min-width:140px"></td>
-    <td style="padding:4px"><input class="inp ph-it-code" value="${esc(it.code||'')}" placeholder="Mã SP (ưu tiên)" title="Nhập mã sản phẩm để tự điền tên/hãng" oninput="autoFillByCode(this.closest('tr'),{codeSel:'.ph-it-code',nameSel:'.ph-it-name'})" style="font-size:12px;width:90px;font-weight:600"></td>
+    <td style="padding:4px">
+      <div style="display:flex;gap:3px;align-items:center">
+        <input class="inp ph-it-code" list="ph-code-list" value="${esc(it.code||'')}" placeholder="Mã SP (ưu tiên)" title="Chọn mã có sẵn hoặc nhập mã mới" oninput="autoFillByCode(this.closest('tr'),{codeSel:'.ph-it-code',nameSel:'.ph-it-name'})" style="font-size:12px;width:88px;font-weight:600">
+        <button type="button" class="btn btn-g" style="padding:2px 5px;font-size:10px" title="Mã mới → lưu vào Danh mục sản phẩm" onclick="quickSaveToCatalog(this,{codeSel:'.ph-it-code',nameSel:'.ph-it-name'})">💾</button>
+      </div>
+    </td>
     <td style="padding:4px"><input class="inp ph-it-qty" value="${it.qty||1}" placeholder="1" style="font-size:12px;width:46px;text-align:center" oninput="this.value=this.value.replace(/[^0-9]/g,'')"></td>
     <td style="padding:4px"><input class="inp ph-it-price" value="${it.price?Number(it.price).toLocaleString('vi-VN'):''}" placeholder="0" style="font-size:12px;width:110px;text-align:right" inputmode="numeric" oninput="onPriceInput(this)"></td>
     <td style="padding:4px"><select class="inp ph-it-cur" style="font-size:12px;width:60px">${['VND','USD','EUR'].map(c=>`<option value="${c}"${(it.currency||'VND')===c?' selected':''}>${c}</option>`).join('')}</select></td>
@@ -6620,6 +6672,7 @@ function openPriceModal(id){
         </table>
       </div>
       <datalist id="ph-name-list">${catalog.map(c=>`<option value="${esc(c.name)}">`).join('')}</datalist>
+      <datalist id="ph-code-list">${catCodeOptionsHtml()}</datalist>
       <button class="pq-add-row" style="margin-top:10px" onclick="document.getElementById('ph-items-body').insertAdjacentHTML('beforeend', phItemRowHtml({}))">＋ Thêm thiết bị</button>
       <div style="margin-top:14px"><label class="lbl">Ghi chú đơn</label><input class="inp" id="pm-note" value="${esc(order?.note||'')}" placeholder="VD: giá đã gồm VAT, kèm vận chuyển..."></div>
       <div style="display:flex;gap:8px;margin-top:18px;justify-content:flex-end">
